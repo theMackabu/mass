@@ -1,0 +1,6 @@
+[project]
+name = "mass"
+version = "0.0.1"
+
+[tasks.stardust]
+script = ["cargo build --release", "./target/release/mass"]

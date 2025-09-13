@@ -1,0 +1,4 @@
+edition = "2024"
+max_width = 120
+fn_single_line = true
+fn_params_layout = "Compressed"
