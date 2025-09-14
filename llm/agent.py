@@ -76,6 +76,67 @@ class IntelligentMCPAgent:
         # Fallback to the original text
         return response_text.strip()
 
+    def _extract_dockerfile_from_text(self, response_text: str) -> str:
+        """Extract clean Dockerfile content from LLM response."""
+        import re
+
+        if not response_text:
+            return ""
+
+        # Remove any explanatory text before/after the Dockerfile
+        lines = response_text.strip().split('\n')
+        dockerfile_lines = []
+        in_dockerfile = False
+
+        # Look for the start of actual Dockerfile content
+        for line in lines:
+            stripped_line = line.strip()
+
+            # Skip markdown code blocks
+            if stripped_line.startswith('```'):
+                continue
+
+            # Skip common explanatory phrases
+            if any(phrase in stripped_line.lower() for phrase in [
+                'here is', 'here\'s', 'this dockerfile', 'the dockerfile',
+                'below is', 'i\'ve created', 'i created', 'generated dockerfile',
+                'dockerfile for', 'production-ready dockerfile'
+            ]):
+                continue
+
+            # Start capturing when we see actual Dockerfile commands
+            if stripped_line.startswith(('FROM ', 'RUN ', 'COPY ', 'ADD ', 'WORKDIR ',
+                                       'EXPOSE ', 'CMD ', 'ENTRYPOINT ', 'ENV ', 'ARG ',
+                                       'LABEL ', 'USER ', 'VOLUME ', 'HEALTHCHECK ')):
+                in_dockerfile = True
+
+            # Stop if we encounter explanatory text after Dockerfile content
+            if in_dockerfile and stripped_line and not stripped_line.startswith('#') and \
+               any(phrase in stripped_line.lower() for phrase in [
+                   'this dockerfile', 'to build', 'to run', 'explanation:', 'note:',
+                   'you can', 'make sure', 'remember to'
+               ]):
+                break
+
+            # Capture Dockerfile lines (including comments and empty lines)
+            if in_dockerfile:
+                dockerfile_lines.append(line)
+
+        # If no Dockerfile commands found, try extracting from code blocks
+        if not dockerfile_lines:
+            # Look for content between code blocks
+            dockerfile_pattern = r'```(?:dockerfile|docker)?\s*\n?(.*?)\n?\s*```'
+            match = re.search(dockerfile_pattern, response_text, re.DOTALL | re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+
+            # Fallback: look for FROM command and take everything after it
+            from_match = re.search(r'(FROM\s+.*?)(?:\n\n|\Z)', response_text, re.DOTALL | re.IGNORECASE)
+            if from_match:
+                return from_match.group(1).strip()
+
+        return '\n'.join(dockerfile_lines).strip()
+
     async def select_important_files(self, tree_structure: str, analysis: Dict[str, Any], max_token_budget: int = 90000) -> List[str]:
         """
         Use LLM to intelligently select which files to analyze based on the tree structure
@@ -585,32 +646,29 @@ Generate a Dockerfile that:
 
 Consider these frameworks: {', '.join(frameworks) if frameworks else 'None'}
 
-Return ONLY the Dockerfile content (no markdown code blocks):
+CRITICAL: Your response must contain ONLY Dockerfile instructions. Start immediately with "FROM" and include only valid Dockerfile commands. No explanations, no markdown, no code blocks, no additional text:
 """
 
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a DevOps engineer creating production-ready Dockerfiles. CRITICAL: Return ONLY the Dockerfile content. No explanatory text, no markdown, no code blocks, no additional content. Just the raw Dockerfile text."},
+                    {"role": "system", "content": "You are a DevOps engineer creating production-ready Dockerfiles. CRITICAL: You must respond with ONLY Dockerfile instructions (FROM, RUN, COPY, etc.). Do not include: explanatory text, markdown code blocks (```), comments about the dockerfile, build instructions, or any conversational text. Start your response directly with 'FROM' and include only valid Dockerfile commands."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2  # Lower temperature for more consistent infrastructure code
             )
 
             dockerfile_content = response.choices[0].message.content
+            print(f"🐳 Raw Dockerfile response: {dockerfile_content[:200]}...", file=sys.stderr)
 
-            # Clean up any markdown formatting if present
-            if dockerfile_content and dockerfile_content.startswith('```'):
-                lines = dockerfile_content.split('\n')
-                # Remove first and last lines if they are markdown markers
-                if lines[0].startswith('```'):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == '```':
-                    lines = lines[:-1]
-                dockerfile_content = '\n'.join(lines)
-
-            return dockerfile_content.strip() if dockerfile_content else ""
+            if dockerfile_content:
+                # Clean the response using robust text extraction
+                cleaned_content = self._extract_dockerfile_from_text(dockerfile_content)
+                print(f"🧹 Cleaned Dockerfile: {cleaned_content[:200]}...", file=sys.stderr)
+                return cleaned_content
+            else:
+                return ""
 
         except Exception as e:
             print(f"Error generating Dockerfile: {e}", file=sys.stderr)

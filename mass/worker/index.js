@@ -611,8 +611,20 @@ mcp.registerTool(
       const repo = repositories.get(repoId);
       repo.generatedTools = intelligentAnalysis.mcp_tools;
       repo.documentation = intelligentAnalysis.documentation;
-      // Note: Only generate Dockerfile, not full server template
       repositories.set(repoId, repo);
+
+      // Generate Dockerfile for MCP server deployment
+      try {
+        console.log(`🐳 Generating Dockerfile for MCP server...`);
+        const dockerfile = await generateDockerfileForMCPServer(repo);
+        repo.dockerfile = dockerfile;
+        repositories.set(repoId, repo);
+        console.log(`✅ Dockerfile generated successfully`);
+      } catch (error) {
+        console.warn(`⚠️  Dockerfile generation failed: ${error.message}`);
+        repo.dockerfile = generateFallbackDockerfile();
+        repositories.set(repoId, repo);
+      }
 
       console.log(`✅ Repository ${repoId} persisted at: ${repo.workspacePath}`);
 
@@ -641,8 +653,9 @@ mcp.registerTool(
                     usage: `await mcp.callTool('${tool.name}', ${JSON.stringify(tool.example_input || {})})`,
                   })),
                 documentation: intelligentAnalysis.documentation,
+                dockerfile: repo.dockerfile ? "Generated" : "Failed",
                 toolsCount: intelligentAnalysis.mcp_tools.length,
-                message: `Generated MCP tools and documentation with ${intelligentAnalysis.mcp_tools.length} tools. Ready for deployment.`,
+                message: `Generated MCP tools and documentation with ${intelligentAnalysis.mcp_tools.length} tools. ${repo.dockerfile ? 'Dockerfile ready for deployment.' : 'Warning: Dockerfile generation failed.'}`,
               },
               null,
               2,
@@ -1131,6 +1144,101 @@ async function generateDockerfileForFiles(repo) {
   }
 
   return result.dockerfile || '# Dockerfile generation failed';
+}
+
+// Generate Dockerfile specifically for MCP servers
+async function generateDockerfileForMCPServer(repo) {
+  // Read package.json to understand the project structure
+  let packageJson = {};
+  try {
+    const files = await readDirectoryFiles(repo.workspacePath);
+    if (files['package.json']) {
+      packageJson = JSON.parse(files['package.json']);
+    }
+  } catch (error) {
+    console.warn(`Could not read package.json: ${error.message}`);
+  }
+
+  // Prepare input for Python agent
+  const agentInput = {
+    repo_id: repo.id,
+    project_name: repo.projectName,
+    description: repo.description,
+    files: await readDirectoryFiles(repo.workspacePath),
+    file_structure: analyzeFileStructure(await readDirectoryFiles(repo.workspacePath)),
+    api_endpoints: [],
+    package_json: packageJson,
+    is_mcp_server: true,
+    openai_api_key: Deno.env.get('OPENAI_API_KEY') || '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',
+    openai_base_url: Deno.env.get('OPENAI_BASE_URL') || 'https://api.groq.com/openai/v1',
+    openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b',
+  };
+
+  // Call Python agent for Dockerfile generation
+  const command = new Deno.Command('uv', {
+    args: ['run', 'agent.py', 'generate-dockerfile'],
+    stdin: 'piped',
+    stdout: 'piped',
+    stderr: 'piped',
+    cwd: `${Deno.cwd()}/llm`,
+  });
+
+  const child = command.spawn();
+  const writer = child.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(JSON.stringify(agentInput)));
+  await writer.close();
+
+  const { code, stdout, stderr } = await child.output();
+
+  if (code !== 0) {
+    const errorText = new TextDecoder().decode(stderr);
+    throw new Error(`Python agent failed: ${errorText}`);
+  }
+
+  const outputText = new TextDecoder().decode(stdout);
+  const result = JSON.parse(outputText);
+
+  if (!result.success) {
+    throw new Error(`Python agent error: ${result.error}`);
+  }
+
+  return result.dockerfile || generateFallbackDockerfile();
+}
+
+// Generate a basic fallback Dockerfile when AI generation fails
+function generateFallbackDockerfile() {
+  return `# MCP Server Dockerfile (Fallback)
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy source code
+COPY . .
+
+# Create non-root user
+RUN addgroup -g 1001 -S mcpuser
+RUN adduser -S mcpuser -u 1001
+
+# Change ownership
+RUN chown -R mcpuser:mcpuser /app
+USER mcpuser
+
+# Expose MCP server port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
+    CMD curl -f http://localhost:3000/health || exit 1
+
+# Start MCP server
+CMD ["npm", "start"]
+`;
 }
 
 // List deployed containers
