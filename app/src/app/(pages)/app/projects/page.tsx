@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { CreateDialog } from './create';
+import { Box, Card, Text } from 'summit';
 import { ChevronRightIcon } from '@heroicons/react/20/solid';
 import { CircleStackIcon, ServerStackIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 
@@ -12,7 +13,7 @@ import { listProjects } from '@/actions/list-projects';
 const statuses = {
   offline: 'bg-zinc-400 dark:bg-zinc-500',
   online: 'bg-green-500 dark:bg-green-400',
-  error: 'bg-rose-500 dark:bg-rose-400'
+  error: 'bg-rose-500 dark:bg-rose-400',
 };
 
 const items = [
@@ -21,22 +22,22 @@ const items = [
     name: 'Nebula',
     description: 'Lorem Ipsum',
     iconColor: 'bg-cyan-500',
-    icon: ServerStackIcon
+    icon: ServerStackIcon,
   },
   {
     kind: 'website',
     name: 'Pages',
     description: 'Lorem Ipsum',
     iconColor: 'bg-pink-500',
-    icon: GlobeAltIcon
+    icon: GlobeAltIcon,
   },
   {
     kind: 'database',
     name: 'Database',
     description: 'Lorem Ipsum',
     iconColor: 'bg-yellow-500',
-    icon: CircleStackIcon
-  }
+    icon: CircleStackIcon,
+  },
 ];
 
 export default async () => {
@@ -65,7 +66,7 @@ export default async () => {
                   <span
                     className={tw(
                       item.iconColor,
-                      'inline-flex size-10 items-center justify-center rounded-lg'
+                      'inline-flex size-10 items-center justify-center rounded-lg',
                     )}
                   >
                     <item.icon aria-hidden="true" className="size-6 text-white" />
@@ -95,15 +96,47 @@ export default async () => {
     );
 
   return (
-    <div className="flex flex-col">
-      <ul role="list" className="divide-y divide-zinc-100 dark:divide-white/5">
-        {list.map(deployment => (
-          <Link href={`/projects/${deployment.id}`} key={deployment.id} className="flex p-2">
-            <div className={tw('size-2 rounded-full', statuses[deployment.metadata?.status])} />
-            {deployment.name}
-          </Link>
-        ))}
-      </ul>
+    <div className="flex">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {list.map(deployment => {
+          const item = items.findLast(item => item.kind === deployment.metadata?.kind);
+
+          return (
+            <div key={deployment.id} className="relative md:w-[350px]">
+              <Card asChild>
+                <Link href={`/app/projects/${deployment.id}`}>
+                  <div
+                    className={tw(
+                      'size-2 rounded-full absolute right-3',
+                      statuses[deployment.metadata?.status],
+                    )}
+                  />
+                  <div className="flex gap-x-3">
+                    {item && (
+                      <span
+                        className={tw(
+                          item.iconColor,
+                          'inline-flex size-10 items-center justify-center rounded-lg',
+                        )}
+                      >
+                        <item.icon aria-hidden="true" className="size-6 text-white" />
+                      </span>
+                    )}
+                    <div>
+                      <Text as="div" size="2" weight="bold">
+                        {deployment.name}
+                      </Text>
+                      <Text as="div" color="gray" size="2">
+                        {deployment.metadata?.status}
+                      </Text>
+                    </div>
+                  </div>
+                </Link>
+              </Card>
+            </div>
+          );
+        })}
+      </div>
 
       <div className="select-none fixed bottom-4 right-4 z-50 hidden md:block">
         <div className="group flex items-center gap-2 px-4 py-1.5 bg-black/90 hover:bg-black/95 dark:bg-white/10 dark:hover:bg-white/20 backdrop-blur-sm text-white dark:text-white font-medium rounded-full border border-white/10 shadow-lg shadow-black/20 transition-all duration-200 ease-in-out hover:scale-101 active:scale-98 cursor-pointer">

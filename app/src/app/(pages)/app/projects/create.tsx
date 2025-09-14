@@ -7,6 +7,7 @@ import { authClient } from '@/service/auth/client';
 import { useRouter } from 'next/navigation';
 
 import { Dialog, Select, Spinner, Button, Flex, Text, TextField } from 'summit';
+import { updateProject } from '@/actions/update-project';
 
 type Kind = 'script' | 'website' | 'database' | 'blank' | string;
 type DialogProps = Children<{ title?: string; selected: Kind }>;
@@ -18,21 +19,27 @@ export function CreateDialog({ title, selected, children }: DialogProps) {
   const form = useForm({
     defaultValues: {
       name: '',
-      kind: selected
+      kind: selected,
     },
 
     onSubmit: async ({ value }) => {
-      await authClient.apiKey.create({
+      const { data } = await authClient.apiKey.create({
         name: value.name,
-        prefix: 'mass',
-        metadata: { kind: value.kind, status: 'offline' }
+        prefix: 'mass_',
       });
 
-      setOpen(false);
-      refresh();
+      if (!data) {
+        toast.error('Failed to create project');
+        return setOpen(false);
+      }
+
+      updateProject(data.id, data.key, value.kind).then(() => {
+        setOpen(false);
+        refresh();
+      });
 
       toast.success('Created project');
-    }
+    },
   });
 
   return (
@@ -65,7 +72,7 @@ export function CreateDialog({ title, selected, children }: DialogProps) {
                 if (!value) return 'Project name is required';
                 if (value.length < 3) return 'Must be at least 3 characters';
                 return undefined;
-              }
+              },
             }}
           >
             {field => (
@@ -95,7 +102,7 @@ export function CreateDialog({ title, selected, children }: DialogProps) {
                   placeholder="Stardust"
                   onChange={e => field.handleChange(e.target.value)}
                   style={{
-                    borderColor: field.state.meta.errors.length > 0 ? 'red' : undefined
+                    borderColor: field.state.meta.errors.length > 0 ? 'red' : undefined,
                   }}
                 />
               </Flex>

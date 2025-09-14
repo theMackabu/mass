@@ -50,7 +50,7 @@ export const Tabs = ({ tabs, root, isParam }: TabProps) => {
   };
 
   return (
-    <nav className="flex z-10 sticky top-0 w-full">
+    <nav className="flex z-10 sticky top-0 w-full select-none">
       <ul className="flex min-w-full flex-none gap-x-7 px-1 text-sm font-[450] overflow-visible">
         {tabs.map(tab => (
           <li
@@ -58,7 +58,7 @@ export const Tabs = ({ tabs, root, isParam }: TabProps) => {
             className={tw(
               'relative text-zinc-500 hover:text-zinc-600',
               'dark:text-zinc-400 dark:hover:text-zinc-200',
-              isTabActive(tab) && 'text-black dark:text-white pointer-events-none'
+              isTabActive(tab) && 'text-black dark:text-white',
             )}
           >
             {isTabActive(tab) && (

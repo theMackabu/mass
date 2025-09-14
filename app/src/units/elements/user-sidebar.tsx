@@ -5,7 +5,6 @@ import { useSession } from '@/service/auth/client';
 
 import { Drawer } from 'vaul';
 import { Flex, Text } from 'summit';
-import BoringAvatar from 'boring-avatars';
 import { XIcon } from '@phosphor-icons/react';
 import { Avatar } from '@/units/summit/avatar';
 
@@ -15,17 +14,15 @@ import {
   SidebarLabel,
   SidebarIcon,
   SidebarSection,
-  SidebarDivider
+  SidebarDivider,
 } from '@/units/summit/sidebar';
 
 import {
   BookBookmarkIcon,
-  BrowserIcon,
-  PlanetIcon,
   FlaskIcon,
   GearSixIcon,
   BookOpenTextIcon,
-  SignOutIcon
+  SignOutIcon,
 } from '@phosphor-icons/react';
 
 export const UserSidebar = () => {
@@ -45,7 +42,7 @@ export const UserSidebar = () => {
       <Drawer.Portal>
         <Drawer.Overlay className="fixed inset-0 bg-zinc-900/50" />
         <Drawer.Content
-          className="right-1.5 top-1.5 bottom-1.5 fixed z-10 outline-none w-[310px] flex"
+          className="right-1.5 top-1.5 fixed z-10 outline-none w-[310px] flex"
           style={{ '--initial-transform': 'calc(100% + 8px)' } as React.CSSProperties}
         >
           <Flex
@@ -63,6 +60,9 @@ export const UserSidebar = () => {
                   />
                   <Flex direction="column">
                     <Text className="text-sm font-bold leading-4!">{data?.user.username}</Text>
+                    <Text className="text-xs font-medium text-zinc-500 dark:text-zinc-400 leading-4!">
+                      {data?.user.email}
+                    </Text>
                   </Flex>
                 </Flex>
               </Drawer.Title>
@@ -79,15 +79,6 @@ export const UserSidebar = () => {
                   <SidebarIcon icon={BookBookmarkIcon} />
                   <SidebarLabel>Your projects</SidebarLabel>
                 </SidebarItem>
-                <SidebarItem href="/app/projects/pages">
-                  <SidebarIcon icon={BrowserIcon} />
-                  <SidebarLabel>Your pages</SidebarLabel>
-                </SidebarItem>
-                <SidebarItem href="/app/settings/workspaces" onClick={() => setOpen(false)}>
-                  <SidebarIcon icon={PlanetIcon} />
-                  <SidebarLabel>Your workspaces</SidebarLabel>
-                </SidebarItem>
-                <SidebarDivider />
                 <SidebarItem href="https://docs.ship.ci">
                   <SidebarIcon icon={BookOpenTextIcon} />
                   <SidebarLabel>Documentation</SidebarLabel>

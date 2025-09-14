@@ -6,9 +6,9 @@ import { redirect } from 'next/navigation';
 import { getSession } from '@/actions/get-session';
 
 const tabs = [
-  { id: 0, name: 'Dashboard', href: 'app/projects' },
-  { id: 1, name: 'Activity', href: 'app/activity' },
-  { id: 2, name: 'Explore', href: 'app/explore' }
+  { id: 0, name: 'Projects', href: 'projects', wildcard: true },
+  { id: 1, name: 'Activity', href: 'activity' },
+  { id: 2, name: 'Explore', href: 'explore' },
 ];
 
 export default async ({ children }: Children) => {
@@ -16,7 +16,7 @@ export default async ({ children }: Children) => {
   if (!session.user) redirect('/login');
 
   return (
-    <StackedLayout navbar={<NavMenu slot={<Tabs tabs={tabs} root="/" />} />}>
+    <StackedLayout navbar={<NavMenu slot={<Tabs tabs={tabs} root="/app" />} />}>
       {children}
     </StackedLayout>
   );

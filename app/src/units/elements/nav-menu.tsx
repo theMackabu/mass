@@ -8,7 +8,7 @@ import { Navbar, NavbarDivider, NavbarSpacer } from '@/units/summit/navbar';
 
 export const NavMenu = ({ isSlug, slot }: { isSlug?: boolean; slot?: React.ReactNode }) => (
   <Navbar>
-    <MassLogo size={60} href="/" />
+    <MassLogo size={60} href="/app/projects" />
 
     {isSlug && (
       <Fragment>
