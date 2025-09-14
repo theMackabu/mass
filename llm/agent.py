@@ -133,7 +133,7 @@ Avoid:
 - Very large generated files
 - Images, videos, or other binary assets
 
-Return a JSON array of file paths (relative to project root):
+Return ONLY a JSON array of file paths (relative to project root). No explanatory text, no markdown, just the raw JSON array:
 [
   "package.json",
   "src/index.js",
@@ -148,7 +148,7 @@ Focus on files that will give the best understanding of what this project does a
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a senior software engineer analyzing codebases. Select the most important files for understanding project functionality and generating useful tools. Return only a JSON array of file paths."},
+                    {"role": "system", "content": "You are a senior software engineer analyzing codebases. Select the most important files for understanding project functionality and generating useful tools. Return ONLY a JSON array of file paths. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw JSON array."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.1  # Low temperature for consistent file selection
@@ -297,7 +297,7 @@ Analyze this codebase and identify:
 Context:
 {context}
 
-Return a JSON object with this structure:
+Return ONLY a JSON object with this structure. No explanatory text, no markdown, just the raw JSON object:
 {{
   "api_endpoints": [
     {{
@@ -343,7 +343,7 @@ Return a JSON object with this structure:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are an expert software architect analyzing codebases. Return valid JSON only."},
+                    {"role": "system", "content": "You are an expert software architect analyzing codebases. Return ONLY valid JSON. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw JSON object."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3
@@ -390,7 +390,7 @@ For each MCP tool, create:
 4. **Integration Tools** - For external service interactions
 5. **Development Tools** - Build, test, deploy, monitor
 
-Return JSON array with this structure:
+Return ONLY a JSON array with this structure. No explanatory text, no markdown, just the raw JSON array:
 [
   {{
     "name": "kebab-case-name",
@@ -421,7 +421,7 @@ Focus on tools that would actually be useful for developers working with this pr
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are an expert at creating practical developer tools. Generate tools that developers would actually want to use. Return valid JSON array only."},
+                    {"role": "system", "content": "You are an expert at creating practical developer tools. Generate tools that developers would actually want to use. Return ONLY a valid JSON array. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw JSON array."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7
@@ -498,13 +498,15 @@ Create documentation with these sections:
 
 Make this practical and useful for developers who need to understand and work with this codebase.
 Use clear markdown formatting with code examples where helpful.
+
+Return ONLY the documentation content. Do not include any explanatory text, additional formatting, or code blocks around the documentation. Just the raw markdown documentation.
 """
 
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a technical writer creating developer documentation. Write clear, comprehensive documentation that helps developers understand and use the codebase effectively."},
+                    {"role": "system", "content": "You are a technical writer creating developer documentation. Write clear, comprehensive documentation that helps developers understand and use the codebase effectively. Return ONLY the documentation text. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw documentation content."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.4
@@ -545,7 +547,7 @@ Requirements:
 - Include health check endpoints
 - Production-ready with proper logging
 
-Return JSON with file contents:
+Return ONLY a JSON object with file contents. No explanatory text, no markdown, just the raw JSON object:
 {{
   "package.json": "...",
   "server.ts": "...", 
@@ -559,7 +561,7 @@ Return JSON with file contents:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are an expert Node.js developer creating production-ready MCP servers. Generate complete, working code with proper error handling and TypeScript types."},
+                    {"role": "system", "content": "You are an expert Node.js developer creating production-ready MCP servers. Generate complete, working code with proper error handling and TypeScript types. Return ONLY valid JSON with file contents. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw JSON object."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3
@@ -643,7 +645,7 @@ Return ONLY the Dockerfile content (no markdown code blocks):
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a DevOps engineer creating production-ready Dockerfiles. Generate efficient, secure, and optimized Dockerfiles based on project analysis."},
+                    {"role": "system", "content": "You are a DevOps engineer creating production-ready Dockerfiles. Generate efficient, secure, and optimized Dockerfiles based on project analysis. Return ONLY the Dockerfile content. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw Dockerfile text."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2  # Lower temperature for more consistent infrastructure code

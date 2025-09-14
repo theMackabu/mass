@@ -277,46 +277,102 @@ async function getRepositoryListing(workspacePath) {
   }
 }
 
-// Create tar.gz archive of repository
-async function createRepositoryArchive(repoId, workspacePath) {
-  const timestamp = Date.now();
-  const archiveName = `repo-${repoId}-${timestamp}.tar.gz`;
-  const archivePath = `/tmp/${archiveName}`;
+// Download GitHub repository to temporary directory
+async function downloadGitHubRepo(githubUrl, repoId) {
+  const tempDir = `/tmp/mass-github-${repoId}-${Date.now()}`;
 
   try {
-    const command = new Deno.Command('tar', {
+    // Parse GitHub URL to get owner/repo
+    let repoPath;
+    if (githubUrl.includes('github.com/')) {
+      const match = githubUrl.match(/github\.com\/([^\/]+\/[^\/]+)/);
+      if (!match) {
+        throw new Error('Invalid GitHub URL format');
+      }
+      repoPath = match[1].replace(/\.git$/, '');
+    } else {
+      throw new Error('URL must be a GitHub repository');
+    }
+
+    // Create temp directory
+    await Deno.mkdir(tempDir, { recursive: true });
+
+    // Clone the repository using git
+    const cloneCommand = new Deno.Command('git', {
       args: [
-        '-czf',
-        archivePath,
-        '--exclude=node_modules',
-        '--exclude=target',
-        '--exclude=.git',
-        '--exclude=__pycache__',
-        '--exclude=.venv',
-        '--exclude=venv',
-        '--exclude=dist',
-        '--exclude=build',
-        '--exclude=*.log',
-        '-C',
-        workspacePath,
-        '.',
+        'clone',
+        '--depth', '1', // Shallow clone for faster download
+        `https://github.com/${repoPath}.git`,
+        tempDir
       ],
       stdout: 'piped',
       stderr: 'piped',
     });
 
-    const child = command.spawn();
+    const child = cloneCommand.spawn();
     const { code, stderr } = await child.output();
 
     if (code !== 0) {
       const errorText = new TextDecoder().decode(stderr);
-      throw new Error(`Tar command failed: ${errorText}`);
+      throw new Error(`Failed to clone repository: ${errorText}`);
     }
 
-    return archivePath;
+    console.log(`Downloaded GitHub repository to: ${tempDir}`);
+    return tempDir;
   } catch (error) {
-    throw new Error(`Failed to create repository archive: ${error.message}`);
+    // Clean up on error
+    try {
+      await Deno.remove(tempDir, { recursive: true });
+    } catch {}
+    throw new Error(`GitHub repository download failed: ${error.message}`);
   }
+}
+
+// Read all files from a directory recursively for compatibility with existing code
+async function readDirectoryFiles(dirPath) {
+  const files = {};
+
+  async function walkDirectory(currentPath, relativePath = '') {
+    try {
+      for await (const entry of Deno.readDir(currentPath)) {
+        const fullPath = `${currentPath}/${entry.name}`;
+        const relativeEntryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+        // Skip common ignore patterns
+        if (
+          entry.name.startsWith('.') ||
+          entry.name === 'node_modules' ||
+          entry.name === 'target' ||
+          entry.name === '__pycache__' ||
+          entry.name === '.venv' ||
+          entry.name === 'venv' ||
+          entry.name === 'dist' ||
+          entry.name === 'build'
+        ) {
+          continue;
+        }
+
+        const stat = await Deno.stat(fullPath);
+
+        if (stat.isDirectory) {
+          await walkDirectory(fullPath, relativeEntryPath);
+        } else if (stat.isFile) {
+          try {
+            const content = await Deno.readTextFile(fullPath);
+            files[relativeEntryPath] = content;
+          } catch (error) {
+            // Skip binary files or files that can't be read as text
+            console.warn(`Skipping file ${relativeEntryPath}: ${error.message}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`Error reading directory ${currentPath}: ${error.message}`);
+    }
+  }
+
+  await walkDirectory(dirPath);
+  return files;
 }
 
 const mcp = new McpServer({
@@ -450,25 +506,24 @@ mcp.registerTool(
   'generate-mcp-server',
   {
     title: 'Generate Complete MCP Server',
-    description: 'Analyze repository and generate complete MCP server with tools and documentation',
+    description: 'Analyze GitHub repository and generate complete MCP server with tools and documentation',
     inputSchema: {
+      githubUrl: z.string().describe('GitHub repository URL (e.g., https://github.com/owner/repo)'),
       repoId: z.string().describe('Unique identifier for the repository'),
       projectName: z.string().optional().describe('Optional project name'),
       description: z.string().optional().describe('Optional project description'),
       maxFiles: z.number().optional().describe('Maximum important files to extract (default: 20)'),
     },
   },
-  async ({ repoId, projectName, description, maxFiles = 20 }) => {
+  async ({ githubUrl, repoId, projectName, description, maxFiles = 20 }) => {
     try {
+      // Download GitHub repository
+      const tempDir = await downloadGitHubRepo(githubUrl, repoId);
+
       // Get repository structure using tree command
-      const treeOutput = await getRepositoryTree(WORKSPACE_ROOT);
+      const treeOutput = await getRepositoryTree(tempDir);
 
-      // Create tar.gz archive of repository
-      const archivePath = await createRepositoryArchive(repoId, WORKSPACE_ROOT);
-
-      // Extract and analyze using Rust operations
-      const tempDir = `/tmp/mass-analysis-${repoId}-${Date.now()}`;
-      await MASS.ops.op_extract_tar_gz(archivePath, tempDir);
+      // Analyze repository using Rust operations
       const analysis = await MASS.ops.op_analyze_repository(tempDir);
 
       // Use LLM-based intelligent file selection by calling the Python agent
@@ -533,14 +588,15 @@ mcp.registerTool(
       // Store repository data
       repositories.set(repoId, {
         id: repoId,
+        githubUrl,
         projectName,
         description,
-        archivePath,
+        tempDir,
         treeStructure: treeOutput,
         analysis,
         importantFiles: importantFiles.split('\n---FILE_SEPARATOR---\n').filter(f => f.trim()),
         storedAt: new Date().toISOString(),
-        workspacePath: WORKSPACE_ROOT,
+        workspacePath: tempDir,
       });
 
       // Trigger intelligent MCP analysis and generation using OpenAI
@@ -618,34 +674,48 @@ mcp.registerTool(
   {
     title: 'Store and Deploy Repository Container',
     description:
-      'Store external repository structure and deploy as regular application container (not MCP server)',
+      'Download GitHub repository and deploy as regular application container (not MCP server)',
     inputSchema: {
+      githubUrl: z.string().describe('GitHub repository URL (e.g., https://github.com/owner/repo)'),
       repoId: z.string().describe('Unique identifier for the repository'),
-      files: z.record(z.string()).describe('Object mapping file paths to their content'),
       projectName: z.string().optional().describe('Optional project name'),
       description: z.string().optional().describe('Optional project description'),
       port: z.number().optional().describe('Port to expose (optional)'),
     },
   },
-  async ({ repoId, files, projectName, description, port }) => {
+  async ({ githubUrl, repoId, projectName, description, port }) => {
     try {
       // Check if repository already exists
       let repo = repositories.get(repoId);
 
       if (!repo) {
-        // Store repository data with file structure analysis
+        // Download GitHub repository
+        const tempDir = await downloadGitHubRepo(githubUrl, repoId);
+
+        // Get repository structure using tree command
+        const treeOutput = await getRepositoryTree(tempDir);
+
+        // Analyze repository using Rust operations
+        const analysis = await MASS.ops.op_analyze_repository(tempDir);
+
+        // Read all files into memory for compatibility
+        const files = await readDirectoryFiles(tempDir);
         const fileStructure = analyzeFileStructure(files);
         const apiEndpoints = extractApiEndpoints(files);
 
         repo = {
           id: repoId,
+          githubUrl,
           projectName,
           description,
           files,
+          tempDir,
+          treeStructure: treeOutput,
+          analysis,
           storedAt: new Date().toISOString(),
           fileStructure,
           apiEndpoints,
-          workspacePath: null, // External files, not workspace-based
+          workspacePath: tempDir,
         };
 
         repositories.set(repoId, repo);
