@@ -13,6 +13,13 @@ dist/
 # dependencies
 node_modules/
 
+# python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+# keep .venv for uv
+
 # logs
 npm-debug.log*
 yarn-debug.log*
