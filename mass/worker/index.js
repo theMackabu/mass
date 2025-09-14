@@ -277,9 +277,11 @@ async function getRepositoryListing(workspacePath) {
   }
 }
 
-// Download GitHub repository to temporary directory
+// Download GitHub repository to persistent directory
 async function downloadGitHubRepo(githubUrl, repoId) {
-  const tempDir = `/tmp/mass-github-${repoId}-${Date.now()}`;
+  // Use a persistent directory under the project root
+  const reposDir = `${Deno.cwd()}/mass/repos`;
+  const repoDir = `${reposDir}/${repoId}`;
 
   try {
     // Parse GitHub URL to get owner/repo
@@ -294,8 +296,15 @@ async function downloadGitHubRepo(githubUrl, repoId) {
       throw new Error('URL must be a GitHub repository');
     }
 
-    // Create temp directory
-    await Deno.mkdir(tempDir, { recursive: true });
+    // Create persistent repos directory
+    await Deno.mkdir(reposDir, { recursive: true });
+
+    // Check if repo already exists, if so remove it first for fresh clone
+    try {
+      await Deno.remove(repoDir, { recursive: true });
+    } catch {
+      // Directory doesn't exist, that's fine
+    }
 
     // Clone the repository using git
     const cloneCommand = new Deno.Command('git', {
@@ -570,9 +579,7 @@ mcp.registerTool(
           selectedFiles = fileSelectionResult.selected_files || [];
           console.log(`LLM selected ${selectedFiles.length} files for analysis`);
         } else {
-          console.warn('LLM file selection failed, falling back to pattern-based selection');
-          // Fallback to pattern-based selection
-          importantFiles = await MASS.ops.op_get_important_files_by_pattern(tempDir, maxFiles);
+          throw new Error(`LLM file selection failed: ${new TextDecoder().decode(fileSelectionOutput.stderr)}`);
         }
 
         // If LLM selection succeeded, get the actual file contents using the new Rust function
@@ -580,9 +587,8 @@ mcp.registerTool(
           importantFiles = await MASS.ops.op_get_important_files(tempDir, selectedFiles);
         }
       } catch (error) {
-        console.warn('LLM file selection failed:', error);
-        // Fallback to pattern-based selection
-        importantFiles = await MASS.ops.op_get_important_files_by_pattern(tempDir, maxFiles);
+        console.error('LLM file selection failed:', error);
+        throw error;
       }
 
       // Store repository data
@@ -604,9 +610,9 @@ mcp.registerTool(
 
       // Store generated content in repository
       const repo = repositories.get(repoId);
-      repo.generatedTools = intelligentAnalysis.mcp_tools || [];
-      repo.documentation = intelligentAnalysis.documentation || {};
-      repo.serverTemplate = intelligentAnalysis.server_template || {};
+      repo.generatedTools = intelligentAnalysis.mcp_tools;
+      repo.documentation = intelligentAnalysis.documentation;
+      repo.serverTemplate = intelligentAnalysis.server_template;
       repositories.set(repoId, repo);
 
       // Clean up temp directory
@@ -628,18 +634,18 @@ mcp.registerTool(
                   frameworks: analysis.frameworks || [],
                 },
                 generatedTools:
-                  intelligentAnalysis.mcp_tools?.map(tool => ({
+                  intelligentAnalysis.mcp_tools.map(tool => ({
                     name: tool.name,
                     title: tool.title,
                     description: tool.description,
                     input_schema: tool.input_schema,
                     category: tool.category,
                     usage: `await mcp.callTool('${tool.name}', ${JSON.stringify(tool.example_input || {})})`,
-                  })) || [],
-                documentation: intelligentAnalysis.documentation || {},
+                  })),
+                documentation: intelligentAnalysis.documentation,
                 serverGenerated: !!intelligentAnalysis.server_template,
-                toolsCount: intelligentAnalysis.mcp_tools?.length || 0,
-                message: `Generated complete MCP server with ${intelligentAnalysis.mcp_tools?.length || 0} tools and comprehensive documentation. Ready for deployment.`,
+                toolsCount: intelligentAnalysis.mcp_tools.length,
+                message: `Generated complete MCP server with ${intelligentAnalysis.mcp_tools.length} tools and comprehensive documentation. Ready for deployment.`,
               },
               null,
               2,
@@ -721,14 +727,9 @@ mcp.registerTool(
         repositories.set(repoId, repo);
 
         // Generate Dockerfile using Python agent analysis
-        try {
-          const dockerfile = await generateDockerfileForFiles(repo);
-          repo.dockerfile = dockerfile;
-          repositories.set(repoId, repo);
-        } catch (error) {
-          console.warn(`Dockerfile generation failed for ${repoId}:`, error.message);
-          // Continue with deployment attempt even if Dockerfile generation fails
-        }
+        const dockerfile = await generateDockerfileForFiles(repo);
+        repo.dockerfile = dockerfile;
+        repositories.set(repoId, repo);
       }
 
       // Ensure we have a Dockerfile for deployment
@@ -907,6 +908,10 @@ async function callIntelligentAgent(repoId) {
     openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b', // Groq's fastest model
   };
 
+  console.log(`🚀 Starting MCP generation for repo: ${repoId}`);
+  console.log(`🔧 Using API: ${agentInput.openai_base_url} with model: ${agentInput.openai_model}`);
+  console.log(`📁 Important files count: ${agentInput.important_files.length}`);
+
   // Call Python LLM agent using uv run
   const command = new Deno.Command('uv', {
     args: ['run', 'agent.py', 'analyze-and-generate'],
@@ -921,31 +926,47 @@ async function callIntelligentAgent(repoId) {
   // Send input to Python process
   const writer = child.stdin.getWriter();
   const encoder = new TextEncoder();
-  await writer.write(encoder.encode(JSON.stringify(agentInput)));
+  const inputJson = JSON.stringify(agentInput);
+  console.log(`🔄 Sending to Python agent:`, inputJson.slice(0, 300) + '...');
+  await writer.write(encoder.encode(inputJson));
   await writer.close();
 
   // Get output from Python process
   const { code, stdout, stderr } = await child.output();
 
+  const outputText = new TextDecoder().decode(stdout);
+  const errorText = new TextDecoder().decode(stderr);
+
+  console.log(`🔍 Python agent output (code: ${code}):`);
+  console.log(`📤 STDOUT:`, outputText);
+  console.log(`🚨 STDERR:`, errorText);
+
   if (code !== 0) {
-    const errorText = new TextDecoder().decode(stderr);
     throw new Error(`Python agent failed: ${errorText}`);
   }
 
-  const outputText = new TextDecoder().decode(stdout);
-  const result = JSON.parse(outputText);
+  let result;
+  try {
+    result = JSON.parse(outputText);
+    console.log(`✅ Parsed JSON result keys:`, Object.keys(result));
+    console.log(`🔢 MCP tools count:`, result.mcp_tools?.length || 0);
+  } catch (parseError) {
+    console.error(`❌ JSON parse error:`, parseError.message);
+    console.error(`🔤 Raw output:`, outputText);
+    throw new Error(`Failed to parse Python agent JSON output: ${parseError.message}`);
+  }
 
   if (!result.success) {
     throw new Error(`Python agent error: ${result.error}`);
   }
 
-  // Store the results
-  repo.generatedTools = result.mcp_tools;
-  repo.dockerfile = result.dockerfile;
-  repo.aiAnalysis = result.ai_analysis;
-  repositories.set(repoId, repo);
+  console.log(`🎯 Returning result with tools:`, result.mcp_tools?.length || 0);
+  if (result.mcp_tools?.length > 0) {
+    console.log(`🔧 First tool example:`, JSON.stringify(result.mcp_tools[0], null, 2));
+  }
 
-  return result.mcp_tools;
+  // Return the full result object (not just mcp_tools!)
+  return result;
 }
 
 // Helper function to analyze file structure (for external files)

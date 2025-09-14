@@ -9,10 +9,11 @@ import sys
 import os
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv(dotenv_path=Path(__file__).parent / '.env')
+# Hardcoded environment variables
+OPENAI_API_KEY = "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"
+OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
+OPENAI_MODEL = "openai/gpt-oss-120b"
 
 # Try to import dependencies - gracefully handle if not available
 try:
@@ -33,7 +34,7 @@ except ImportError as e:
 
 # Set up OpenAI client
 def get_openai_client():
-    api_key = os.getenv('OPENAI_API_KEY')
+    api_key = OPENAI_API_KEY
     if not api_key:
         return None
     return openai.AsyncOpenAI(api_key=api_key)

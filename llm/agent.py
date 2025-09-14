@@ -17,10 +17,11 @@ import os
 import re
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv(dotenv_path=Path(__file__).parent / '.env')
+# Hardcoded environment variables
+OPENAI_API_KEY = "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"
+OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
+OPENAI_MODEL = "openai/gpt-oss-120b"
 
 try:
     import openai
@@ -32,11 +33,11 @@ except ImportError:
 
 class IntelligentMCPAgent:
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
-        self.api_key = api_key or os.getenv('OPENAI_API_KEY')
-        self.base_url = base_url or os.getenv('OPENAI_BASE_URL')  # Allow custom base URL
+        self.api_key = api_key or OPENAI_API_KEY
+        self.base_url = base_url or OPENAI_BASE_URL  # Allow custom base URL
         
         if not self.api_key:
-            raise ValueError("OpenAI API key required. Set OPENAI_API_KEY environment variable.")
+            raise ValueError("OpenAI API key required.")
         
         # Initialize client with optional base_url
         client_kwargs = {"api_key": self.api_key}
@@ -47,53 +48,33 @@ class IntelligentMCPAgent:
         self.client = AsyncOpenAI(**client_kwargs)
         
         # Model selection - defaults to Groq's fastest model
-        self.model = os.getenv('OPENAI_MODEL', 'openai/gpt-oss-120b')  # Groq's fastest model for code analysis
+        self.model = OPENAI_MODEL  # Groq's fastest model for code analysis
         print(f"Using model: {self.model}", file=sys.stderr)
     
-    def _clean_json_response(self, response_text: str) -> str:
-        """
-        Clean JSON response by removing markdown code blocks and other formatting using regex
-        """
-        if not response_text:
-            raise ValueError("Empty response from LLM")
-            
+    def _extract_json_from_text(self, response_text: str) -> str:
+        """Extract JSON from markdown code block or find JSON in text."""
         import re
         
+        if not response_text:
+            raise ValueError("Empty response from LLM")
+        
         # First, try to extract JSON from markdown code blocks
-        # Pattern to match ```json ... ``` or ``` ... ``` blocks
-        json_block_pattern = r'```(?:json)?\s*\n?(.*?)\n?```'
-        json_matches = re.findall(json_block_pattern, response_text, re.DOTALL | re.IGNORECASE)
+        pattern = r'```(?:json)?\s*\n?(.*?)\n?\s*```'
+        match = re.search(pattern, response_text.strip(), re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        
+        # If no code blocks, try to find JSON in the text
+        # Look for content that starts with { or [ and ends with } or ]
+        json_pattern = r'(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}|\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\])'
+        json_matches = re.findall(json_pattern, response_text, re.DOTALL)
         
         if json_matches:
-            # Use the first JSON block found
-            cleaned = json_matches[0].strip()
-        else:
-            # If no code blocks found, try to find JSON-like content
-            # Look for content that starts with { or [ and ends with } or ]
-            json_pattern = r'(\{.*\}|\[.*\])'
-            json_matches = re.findall(json_pattern, response_text, re.DOTALL)
-            
-            if json_matches:
-                # Use the first JSON-like content found
-                cleaned = json_matches[0].strip()
-            else:
-                # Fallback to the original simple cleaning
-                cleaned = response_text.strip()
-                if cleaned.startswith('```json'):
-                    cleaned = cleaned[7:]
-                elif cleaned.startswith('```'):
-                    cleaned = cleaned[3:]
-                    
-                if cleaned.endswith('```'):
-                    cleaned = cleaned[:-3]
-                    
-                cleaned = cleaned.strip()
+            # Use the first JSON-like content found
+            return json_matches[0].strip()
         
-        # Validate that we have some content
-        if not cleaned:
-            raise ValueError("Empty content after cleaning LLM response")
-            
-        return cleaned
+        # Fallback to the original text
+        return response_text.strip()
 
     async def select_important_files(self, tree_structure: str, analysis: Dict[str, Any], max_token_budget: int = 90000) -> List[str]:
         """
@@ -133,7 +114,7 @@ Avoid:
 - Very large generated files
 - Images, videos, or other binary assets
 
-Return ONLY a JSON array of file paths (relative to project root). No explanatory text, no markdown, just the raw JSON array:
+CRITICAL: Return ONLY a valid JSON array. Do not include any explanatory text, markdown formatting, code blocks, or additional content. Just the raw JSON array:
 [
   "package.json",
   "src/index.js",
@@ -148,7 +129,7 @@ Focus on files that will give the best understanding of what this project does a
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a senior software engineer analyzing codebases. Select the most important files for understanding project functionality and generating useful tools. Return ONLY a JSON array of file paths. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw JSON array."},
+                    {"role": "system", "content": "You are a senior software engineer analyzing codebases. CRITICAL: You must return ONLY a valid JSON array of file paths. No explanatory text, no markdown, no code blocks, no additional content. Just pure JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.1  # Low temperature for consistent file selection
@@ -156,7 +137,7 @@ Focus on files that will give the best understanding of what this project does a
 
             raw_response = response.choices[0].message.content
             if raw_response:
-                cleaned_response = self._clean_json_response(raw_response)
+                cleaned_response = self._extract_json_from_text(raw_response)
                 try:
                     selected_files = json.loads(cleaned_response)
                 except json.JSONDecodeError as e:
@@ -175,48 +156,8 @@ Focus on files that will give the best understanding of what this project does a
 
         except Exception as e:
             print(f"Error in LLM file selection: {e}", file=sys.stderr)
-            print("Falling back to pattern-based selection", file=sys.stderr)
-            return self._fallback_file_selection(tree_structure, analysis)
+            raise e
 
-    def _fallback_file_selection(self, tree_structure: str, analysis: Dict[str, Any]) -> List[str]:
-        """
-        Fallback file selection when LLM fails
-        """
-        important_patterns = [
-            "package.json", "Cargo.toml", "pyproject.toml", "requirements.txt",
-            "go.mod", "pom.xml", "build.gradle", "composer.json",
-            "Dockerfile", "docker-compose.yml", ".env.example",
-            "README.md", "README.txt"
-        ]
-
-        # Extract file paths from tree structure
-        files = []
-        for line in tree_structure.split('\n'):
-            line = line.strip()
-            if line and not line.startswith('├') and not line.startswith('└') and not line.startswith('│'):
-                continue
-
-            # Extract filename from tree structure
-            if '──' in line:
-                filename = line.split('──')[-1].strip()
-                if filename and not filename.endswith('/'):
-                    files.append(filename)
-
-        # Return pattern matches and some common entry points
-        selected = []
-        for pattern in important_patterns:
-            for file in files:
-                if pattern in file:
-                    selected.append(file)
-
-        # Add some entry point patterns
-        entry_patterns = ['main.', 'index.', 'app.', 'server.']
-        for pattern in entry_patterns:
-            for file in files:
-                if file.startswith(pattern):
-                    selected.append(file)
-
-        return list(set(selected))[:20]  # Remove duplicates and limit
 
     def _estimate_tokens(self, text: str) -> int:
         """
@@ -297,7 +238,7 @@ Analyze this codebase and identify:
 Context:
 {context}
 
-Return ONLY a JSON object with this structure. No explanatory text, no markdown, just the raw JSON object:
+CRITICAL: Return ONLY a valid JSON object. Do not include any explanatory text, markdown formatting, code blocks, or additional content. Just the raw JSON object:
 {{
   "api_endpoints": [
     {{
@@ -343,7 +284,7 @@ Return ONLY a JSON object with this structure. No explanatory text, no markdown,
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are an expert software architect analyzing codebases. Return ONLY valid JSON. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw JSON object."},
+                    {"role": "system", "content": "You are an expert software architect analyzing codebases. CRITICAL: You must return ONLY a valid JSON object. No explanatory text, no markdown, no code blocks, no additional content. Just pure JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3
@@ -351,7 +292,7 @@ Return ONLY a JSON object with this structure. No explanatory text, no markdown,
             
             raw_response = response.choices[0].message.content
             if raw_response:
-                cleaned_response = self._clean_json_response(raw_response)
+                cleaned_response = self._extract_json_from_text(raw_response)
                 try:
                     result = json.loads(cleaned_response)
                     return result
@@ -364,7 +305,7 @@ Return ONLY a JSON object with this structure. No explanatory text, no markdown,
             
         except Exception as e:
             print(f"Error in OpenAI analysis: {e}", file=sys.stderr)
-            return self._fallback_analysis(tree_structure, analysis, important_files)
+            raise e
 
     async def generate_mcp_tools(self, codebase_analysis: Dict[str, Any], 
                                repo_metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -390,7 +331,7 @@ For each MCP tool, create:
 4. **Integration Tools** - For external service interactions
 5. **Development Tools** - Build, test, deploy, monitor
 
-Return ONLY a JSON array with this structure. No explanatory text, no markdown, just the raw JSON array:
+CRITICAL: Return ONLY a valid JSON array. Do not include any explanatory text, markdown formatting, code blocks, or additional content. Just the raw JSON array:
 [
   {{
     "name": "kebab-case-name",
@@ -421,21 +362,24 @@ Focus on tools that would actually be useful for developers working with this pr
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are an expert at creating practical developer tools. Generate tools that developers would actually want to use. Return ONLY a valid JSON array. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw JSON array."},
+                    {"role": "system", "content": "You are an expert at creating practical developer tools. CRITICAL: You must return ONLY a valid JSON array. No explanatory text, no markdown, no code blocks, no additional content. Just pure JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7
             )
             
             raw_response = response.choices[0].message.content
+            print(f"🤖 Raw LLM response for MCP tools: {raw_response[:300]}...", file=sys.stderr)
             if raw_response:
-                cleaned_response = self._clean_json_response(raw_response)
+                cleaned_response = self._extract_json_from_text(raw_response)
+                print(f"🧹 Cleaned response: {cleaned_response[:300]}...", file=sys.stderr)
                 try:
                     tools = json.loads(cleaned_response)
+                    print(f"✅ Successfully parsed {len(tools) if isinstance(tools, list) else 'unknown'} MCP tools", file=sys.stderr)
                     return tools
                 except json.JSONDecodeError as e:
-                    print(f"JSON decode error in MCP tools generation. Raw response: {raw_response[:200]}...", file=sys.stderr)
-                    print(f"Cleaned response: {cleaned_response[:200]}...", file=sys.stderr)
+                    print(f"❌ JSON decode error in MCP tools generation. Raw response: {raw_response[:200]}...", file=sys.stderr)
+                    print(f"🧹 Cleaned response: {cleaned_response[:200]}...", file=sys.stderr)
                     raise ValueError(f"Invalid JSON response from LLM: {e}")
             else:
                 raise ValueError("Empty response from OpenAI")
@@ -506,7 +450,7 @@ Return ONLY the documentation content. Do not include any explanatory text, addi
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a technical writer creating developer documentation. Write clear, comprehensive documentation that helps developers understand and use the codebase effectively. Return ONLY the documentation text. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw documentation content."},
+                    {"role": "system", "content": "You are a technical writer creating developer documentation. CRITICAL: Return ONLY the documentation content. No explanatory text, no additional formatting, no code blocks around the content. Just the raw documentation."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.4
@@ -517,7 +461,7 @@ Return ONLY the documentation content. Do not include any explanatory text, addi
             
         except Exception as e:
             print(f"Error generating documentation: {e}", file=sys.stderr)
-            return self._fallback_documentation(codebase_analysis, mcp_tools, repo_metadata)
+            raise e
 
     async def generate_mcp_server_template(self, mcp_tools: List[Dict[str, Any]], 
                                          documentation: str,
@@ -547,13 +491,14 @@ Requirements:
 - Include health check endpoints
 - Production-ready with proper logging
 
-Return ONLY a JSON object with file contents. No explanatory text, no markdown, just the raw JSON object:
+CRITICAL: You must return ONLY a valid JSON object. Do not include any bash commands, explanatory text, markdown formatting, or code blocks. Just the raw JSON object with file contents as strings:
+
 {{
-  "package.json": "...",
-  "server.ts": "...", 
-  "Dockerfile": "...",
-  "README.md": "...",
-  "tsconfig.json": "..."
+  "package.json": "{{\\"name\\": \\"mcp-server\\", \\"version\\": \\"1.0.0\\"}}",
+  "server.ts": "import {{ Server }} from '@modelcontextprotocol/sdk';",
+  "Dockerfile": "FROM node:18-alpine",
+  "README.md": "# MCP Server",
+  "tsconfig.json": "{{\\"compilerOptions\\": {{}}}}"
 }}
 """
 
@@ -561,7 +506,7 @@ Return ONLY a JSON object with file contents. No explanatory text, no markdown, 
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are an expert Node.js developer creating production-ready MCP servers. Generate complete, working code with proper error handling and TypeScript types. Return ONLY valid JSON with file contents. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw JSON object."},
+                    {"role": "system", "content": "You are an expert Node.js developer creating production-ready MCP servers. CRITICAL: You must return ONLY a valid JSON object with file contents. No explanatory text, no markdown, no code blocks, no additional content. Just pure JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3
@@ -569,12 +514,14 @@ Return ONLY a JSON object with file contents. No explanatory text, no markdown, 
             
             raw_response = response.choices[0].message.content
             if raw_response:
-                cleaned_response = self._clean_json_response(raw_response)
+                print(f"🔍 Raw server template response: {raw_response[:500]}...", file=sys.stderr)
+                cleaned_response = self._extract_json_from_text(raw_response)
+                print(f"🧹 Cleaned server template response: {cleaned_response[:500]}...", file=sys.stderr)
                 try:
                     server_files = json.loads(cleaned_response)
                 except json.JSONDecodeError as e:
-                    print(f"JSON decode error in server template generation. Raw response: {raw_response[:200]}...", file=sys.stderr)
-                    print(f"Cleaned response: {cleaned_response[:200]}...", file=sys.stderr)
+                    print(f"❌ JSON decode error in server template generation. Raw response: {raw_response[:200]}...", file=sys.stderr)
+                    print(f"🧹 Cleaned response: {cleaned_response[:200]}...", file=sys.stderr)
                     raise ValueError(f"Invalid JSON response from LLM: {e}")
             else:
                 raise ValueError("Empty response from OpenAI")
@@ -586,7 +533,7 @@ Return ONLY a JSON object with file contents. No explanatory text, no markdown, 
             
         except Exception as e:
             print(f"Error generating MCP server: {e}", file=sys.stderr)
-            return self._fallback_server_template(mcp_tools, documentation, repo_metadata)
+            raise e
 
     async def generate_dockerfile_for_repository(self, files: Dict[str, str],
                                                file_structure: Dict[str, Any],
@@ -645,7 +592,7 @@ Return ONLY the Dockerfile content (no markdown code blocks):
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a DevOps engineer creating production-ready Dockerfiles. Generate efficient, secure, and optimized Dockerfiles based on project analysis. Return ONLY the Dockerfile content. Do not include any explanatory text, markdown formatting, or code blocks. Just the raw Dockerfile text."},
+                    {"role": "system", "content": "You are a DevOps engineer creating production-ready Dockerfiles. CRITICAL: Return ONLY the Dockerfile content. No explanatory text, no markdown, no code blocks, no additional content. Just the raw Dockerfile text."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2  # Lower temperature for more consistent infrastructure code
@@ -663,111 +610,12 @@ Return ONLY the Dockerfile content (no markdown code blocks):
                     lines = lines[:-1]
                 dockerfile_content = '\n'.join(lines)
 
-            return dockerfile_content.strip() if dockerfile_content else self._fallback_dockerfile(primary_language, frameworks)
+            return dockerfile_content.strip() if dockerfile_content else ""
 
         except Exception as e:
             print(f"Error generating Dockerfile: {e}", file=sys.stderr)
-            return self._fallback_dockerfile(primary_language, frameworks)
+            raise e
 
-    def _fallback_dockerfile(self, primary_language: str, frameworks: List[str]) -> str:
-        """
-        Generate a basic fallback Dockerfile when AI generation fails
-        """
-        if 'javascript' in primary_language.lower() or 'typescript' in primary_language.lower():
-            return """# Node.js Application Dockerfile
-FROM node:18-alpine
-
-WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies
-RUN npm ci --only=production
-
-# Copy source code
-COPY . .
-
-# Build if needed
-RUN if [ -f "tsconfig.json" ]; then npm run build || true; fi
-
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nextjs -u 1001
-
-# Change ownership
-RUN chown -R nextjs:nodejs /app
-USER nextjs
-
-# Expose port
-EXPOSE 3000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
-    CMD curl -f http://localhost:3000/health || exit 1
-
-# Start application
-CMD ["node", "index.js"]
-"""
-        elif 'python' in primary_language.lower():
-            return """# Python Application Dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \\
-    curl \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements
-COPY requirements*.txt ./
-COPY pyproject.toml* ./
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt || \\
-    pip install --no-cache-dir .
-
-# Copy source code
-COPY . .
-
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash app
-RUN chown -R app:app /app
-USER app
-
-# Expose port
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Start application
-CMD ["python", "main.py"]
-"""
-        else:
-            return """# Generic Application Dockerfile
-FROM alpine:latest
-
-WORKDIR /app
-
-# Install basic dependencies
-RUN apk add --no-cache curl
-
-# Copy all files
-COPY . .
-
-# Expose port
-EXPOSE 8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
-    CMD curl -f http://localhost:8080/health || exit 1
-
-# Start application
-CMD ["./start.sh"]
-"""
 
     def _build_analysis_context(self, tree_structure: str, analysis: Dict[str, Any],
                                important_files: List[str]) -> str:
@@ -797,65 +645,9 @@ KEY FILES (first 10):
         
         return context
 
-    def _fallback_analysis(self, tree_structure: str, analysis: Dict[str, Any], 
-                          important_files: List[str]) -> Dict[str, Any]:
-        """Fallback analysis when OpenAI fails"""
-        return {
-            "api_endpoints": [],
-            "key_functions": [],
-            "database_operations": [],
-            "external_integrations": [],
-            "project_summary": f"Project with {analysis.get('file_count', 0)} files using {', '.join(analysis.get('languages', []))}",
-            "architecture_pattern": "Unknown",
-            "main_technologies": analysis.get('languages', [])
-        }
 
 
-    def _fallback_documentation(self, codebase_analysis: Dict[str, Any], 
-                               mcp_tools: List[Dict[str, Any]], 
-                               repo_metadata: Dict[str, Any]) -> str:
-        """Generate basic fallback documentation"""
-        return f"""# {repo_metadata.get('project_name', 'Project')} Documentation
 
-## Overview
-{codebase_analysis.get('project_summary', 'No summary available')}
-
-## Technologies
-{', '.join(codebase_analysis.get('main_technologies', []))}
-
-## Available MCP Tools
-{len(mcp_tools)} tools generated for this project.
-
-## Status
-Documentation generated with fallback method - OpenAI analysis failed.
-"""
-
-    def _fallback_server_template(self, mcp_tools: List[Dict[str, Any]], 
-                                 documentation: str, 
-                                 repo_metadata: Dict[str, Any]) -> Dict[str, str]:
-        """Generate basic fallback server template"""
-        return {
-            "package.json": json.dumps({
-                "name": f"mcp-server-{repo_metadata.get('project_name', 'project')}",
-                "version": "1.0.0",
-                "type": "module",
-                "dependencies": {
-                    "@modelcontextprotocol/sdk": "^0.5.0"
-                }
-            }, indent=2),
-            "server.ts": f"""// Basic MCP server template
-import {{ McpServer }} from '@modelcontextprotocol/sdk/server/mcp';
-
-const server = new McpServer({{
-  name: '{repo_metadata.get('project_name', 'project')}',
-  version: '1.0.0'
-}});
-
-// Add your tools here
-console.log('MCP server starting...');
-""",
-            "README.md": f"# {repo_metadata.get('project_name', 'Project')} MCP Server\n\nGenerated MCP server with {len(mcp_tools)} tools."
-        }
 
 # CLI Interface
 async def main():
