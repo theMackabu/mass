@@ -52,22 +52,42 @@ class IntelligentMCPAgent:
     
     def _clean_json_response(self, response_text: str) -> str:
         """
-        Clean JSON response by removing markdown code blocks and other formatting
+        Clean JSON response by removing markdown code blocks and other formatting using regex
         """
         if not response_text:
             raise ValueError("Empty response from LLM")
             
-        # Remove markdown code blocks
-        response_text = response_text.strip()
-        if response_text.startswith('```json'):
-            response_text = response_text[7:]  # Remove ```json
-        elif response_text.startswith('```'):
-            response_text = response_text[3:]   # Remove ```
+        import re
+        
+        # First, try to extract JSON from markdown code blocks
+        # Pattern to match ```json ... ``` or ``` ... ``` blocks
+        json_block_pattern = r'```(?:json)?\s*\n?(.*?)\n?```'
+        json_matches = re.findall(json_block_pattern, response_text, re.DOTALL | re.IGNORECASE)
+        
+        if json_matches:
+            # Use the first JSON block found
+            cleaned = json_matches[0].strip()
+        else:
+            # If no code blocks found, try to find JSON-like content
+            # Look for content that starts with { or [ and ends with } or ]
+            json_pattern = r'(\{.*\}|\[.*\])'
+            json_matches = re.findall(json_pattern, response_text, re.DOTALL)
             
-        if response_text.endswith('```'):
-            response_text = response_text[:-3]  # Remove trailing ```
-            
-        cleaned = response_text.strip()
+            if json_matches:
+                # Use the first JSON-like content found
+                cleaned = json_matches[0].strip()
+            else:
+                # Fallback to the original simple cleaning
+                cleaned = response_text.strip()
+                if cleaned.startswith('```json'):
+                    cleaned = cleaned[7:]
+                elif cleaned.startswith('```'):
+                    cleaned = cleaned[3:]
+                    
+                if cleaned.endswith('```'):
+                    cleaned = cleaned[:-3]
+                    
+                cleaned = cleaned.strip()
         
         # Validate that we have some content
         if not cleaned:
