@@ -1260,25 +1260,24 @@ mcp.registerTool(
         throw new Error(`Repository ${repoId} not found`);
       }
 
-      if (!repo.serverTemplate || Object.keys(repo.serverTemplate).length === 0) {
-        throw new Error(
-          `No MCP server template generated for repository ${repoId}. Run generate-mcp-server first.`,
-        );
-      }
-
       // Auto-generate subdomain and port if not provided
       const deploySubdomain = subdomain || `${repoId}-mcp`;
       const deployPort = port || 3000 + Math.floor(Math.random() * 1000);
 
-      // Create deployment directory
+      // Use existing MCP server template directory
+      const mcpTemplateDir = `${Deno.cwd()}/llm/mcp_server_template`;
+      const repoPath = `${mcpTemplateDir}/${repoId}`;
+
+      // Check if the repo was downloaded to the template directory
+      try {
+        await Deno.stat(repoPath);
+      } catch {
+        throw new Error(`Repository ${repoId} not found in MCP template directory. Run generate-mcp-server first.`);
+      }
+
+      // Build and deploy container from the MCP template directory
       const deploymentId = `mcp-${repoId}-${Date.now()}`;
-      const deployDir = `/tmp/mcp-deployments/${deploymentId}`;
-
-      // Create deployment files from generated template
-      await createMCPDeployment(repo, deployDir, deployPort);
-
-      // Build and deploy container
-      const containerResult = await deployMCPContainer(deploymentId, deployDir, deployPort);
+      const containerResult = await deployMCPContainer(deploymentId, mcpTemplateDir, deployPort);
 
       // Store deployment info
       repo.deployment = {
@@ -1443,36 +1442,7 @@ mcp.registerTool(
   }),
 );
 
-// Create MCP server deployment from generated template
-async function createMCPDeployment(repo, deployDir, port) {
-  try {
-    // Create deployment directory
-    await runCommand('mkdir', ['-p', deployDir]);
-
-    // Write all generated server files
-    const serverFiles = repo.serverTemplate;
-
-    for (const [filename, content] of Object.entries(serverFiles)) {
-      const filePath = `${deployDir}/${filename}`;
-      await Deno.writeTextFile(filePath, content);
-    }
-
-    // Update port in server files if needed
-    if (serverFiles['server.ts'] && port !== 3000) {
-      let serverContent = serverFiles['server.ts'];
-      serverContent = serverContent.replace(/port.*?3000/g, `port: ${port}`);
-      await Deno.writeTextFile(`${deployDir}/server.ts`, serverContent);
-    }
-
-    return {
-      success: true,
-      deployDir,
-      files: Object.keys(serverFiles),
-    };
-  } catch (error) {
-    throw new Error(`Failed to create MCP deployment: ${error.message}`);
-  }
-}
+// Note: Removed createMCPDeployment function - now using existing @llm/mcp_server_template/ directory
 
 // Deploy MCP server container
 async function deployMCPContainer(deploymentId, deployDir, port) {
