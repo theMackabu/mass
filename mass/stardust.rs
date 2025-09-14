@@ -20,7 +20,7 @@ use deno_runtime::worker::WorkerServiceOptions;
 
 const WORKER_CODE: FastStaticString = {
     const STR: deno_core::v8::OneByteConst =
-        FastStaticString::create_external_onebyte_const(include_bytes!("worker/index.js"));
+        FastStaticString::create_external_onebyte_const(include_bytes!("worker/index.min.js"));
     FastStaticString::new(&STR)
 };
 

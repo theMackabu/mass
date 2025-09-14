@@ -4,4 +4,8 @@ mod snapshot;
 mod stardust;
 
 #[tokio::main]
-async fn main() { let _ = stardust::start_runtime().await; }
+async fn main() {
+    if let Err(error) = stardust::start_runtime().await {
+        eprintln!("{error:?}");
+    };
+}

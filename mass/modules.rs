@@ -1,8 +1,7 @@
 use deno_core::{Extension, extension, op2};
-use std::fs;
-use std::path::Path;
-use std::collections::HashMap;
+use deno_error::JsErrorBox;
 use flate2::read::GzDecoder;
+use std::{collections::HashMap, fs, path::Path};
 use tar::Archive;
 
 #[op2(fast)]
@@ -10,88 +9,102 @@ fn op_pid() -> u32 { std::process::id() }
 
 #[op2]
 #[string]
-fn op_extract_tar_gz(#[string] tar_gz_path: String, #[string] extract_to: String) -> Result<String, deno_core::error::AnyError> {
-    let tar_file = fs::File::open(&tar_gz_path)?;
+fn op_extract_tar_gz(#[string] tar_gz_path: String, #[string] extract_to: String) -> Result<String, JsErrorBox> {
+    let tar_file = fs::File::open(&tar_gz_path).map_err(JsErrorBox::from_err)?;
     let tar = GzDecoder::new(tar_file);
     let mut archive = Archive::new(tar);
-    
-    // Extract to specified directory
-    archive.unpack(&extract_to)?;
-    
+
+    archive.unpack(&extract_to).map_err(JsErrorBox::from_err)?;
     Ok(format!("Extracted {} to {}", tar_gz_path, extract_to))
 }
 
 #[op2]
 #[serde]
-fn op_analyze_repository(#[string] repo_path: String) -> Result<HashMap<String, serde_json::Value>, deno_core::error::AnyError> {
+fn op_analyze_repository(#[string] repo_path: String) -> Result<HashMap<String, serde_json::Value>, JsErrorBox> {
     let mut analysis = HashMap::new();
-    
-    // Analyze file structure
-    let file_count = count_files_recursive(&repo_path)?;
+
+    let file_count = count_files_recursive(&repo_path).map_err(JsErrorBox::from_err)?;
     analysis.insert("file_count".to_string(), serde_json::Value::Number(file_count.into()));
-    
-    // Detect languages
-    let languages = detect_languages(&repo_path)?;
-    analysis.insert("languages".to_string(), serde_json::Value::Array(
-        languages.into_iter().map(|lang| serde_json::Value::String(lang)).collect()
-    ));
-    
-    // Find configuration files
-    let config_files = find_config_files(&repo_path)?;
-    analysis.insert("config_files".to_string(), serde_json::Value::Array(
-        config_files.into_iter().map(|file| serde_json::Value::String(file)).collect()
-    ));
-    
-    // Calculate repository size
-    let repo_size = calculate_directory_size(&repo_path)?;
+
+    let languages = detect_languages(&repo_path).map_err(JsErrorBox::from_err)?;
+    analysis.insert(
+        "languages".to_string(),
+        serde_json::Value::Array(
+            languages
+                .into_iter()
+                .map(|lang| serde_json::Value::String(lang))
+                .collect(),
+        ),
+    );
+
+    let config_files = find_config_files(&repo_path).map_err(JsErrorBox::from_err)?;
+    analysis.insert(
+        "config_files".to_string(),
+        serde_json::Value::Array(
+            config_files
+                .into_iter()
+                .map(|file| serde_json::Value::String(file))
+                .collect(),
+        ),
+    );
+
+    let repo_size = calculate_directory_size(&repo_path).map_err(JsErrorBox::from_err)?;
     analysis.insert("size_bytes".to_string(), serde_json::Value::Number(repo_size.into()));
-    
+
     Ok(analysis)
 }
 
 #[op2]
 #[string]
-fn op_get_important_files_by_pattern(#[string] repo_path: String, #[bigint] max_files: u32) -> Result<String, deno_core::error::AnyError> {
+fn op_get_important_files_by_pattern(
+    #[string] repo_path: String, #[bigint] max_files: u64,
+) -> Result<String, JsErrorBox> {
     let mut important_files = Vec::new();
 
-    // Priority patterns for important files (ordered by importance)
     let important_patterns = vec![
-        // Config files (highest priority)
-        "package.json", "Cargo.toml", "pyproject.toml", "requirements.txt",
-        "go.mod", "pom.xml", "build.gradle", "composer.json",
-        // Docker files
-        "Dockerfile", "docker-compose.yml", ".env.example",
-        // Documentation
-        "README.md", "README.txt",
-        // Entry points (glob patterns)
-        "main.*", "index.*", "app.*", "server.*"
+        "package.json",
+        "Cargo.toml",
+        "pyproject.toml",
+        "requirements.txt",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "composer.json",
+        "Dockerfile",
+        "docker-compose.yml",
+        ".env.example",
+        "README.md",
+        "README.txt",
+        "main.*",
+        "index.*",
+        "app.*",
+        "server.*",
     ];
 
-    // Scan directory for matching files
-    for entry in fs::read_dir(&repo_path)? {
-        let entry = entry?;
+    for entry in fs::read_dir(&repo_path).map_err(JsErrorBox::from_err)? {
+        let entry = entry.map_err(JsErrorBox::from_err)?;
         let path = entry.path();
 
         if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
             for pattern in &important_patterns {
                 let matches = if pattern.contains("*") {
-                    // Handle glob patterns like "main.*"
                     let prefix = pattern.replace("*", "");
                     file_name.starts_with(&prefix)
                 } else {
-                    // Exact match
                     file_name == *pattern
                 };
 
                 if matches {
-                    // Read file content if it's text and not too large
                     if let Ok(metadata) = entry.metadata() {
-                        if metadata.len() > 100_000 {  // Skip files > 100KB
+                        if metadata.len() > 100_000 {
                             important_files.push(format!("{}:[File too large: {} bytes]", file_name, metadata.len()));
                         } else if let Ok(content) = fs::read_to_string(&path) {
-                            // Truncate very long content
                             let truncated_content = if content.len() > 5000 {
-                                format!("{}...\n[Content truncated - {} total chars]", &content[..5000], content.len())
+                                format!(
+                                    "{}...\n[Content truncated - {} total chars]",
+                                    &content[..5000],
+                                    content.len()
+                                )
                             } else {
                                 content
                             };
@@ -115,7 +128,7 @@ fn op_get_important_files_by_pattern(#[string] repo_path: String, #[bigint] max_
 
 #[op2]
 #[string]
-fn op_get_important_files(#[string] repo_path: String, #[serde] file_paths: Vec<String>) -> Result<String, deno_core::error::AnyError> {
+fn op_get_important_files(#[string] repo_path: String, #[serde] file_paths: Vec<String>) -> Result<String, JsErrorBox> {
     let mut important_files = Vec::new();
     let repo_path = Path::new(&repo_path);
 
@@ -139,7 +152,7 @@ fn op_get_important_files(#[string] repo_path: String, #[serde] file_paths: Vec<
                     Ok(content) => {
                         // For very long content, we'll handle truncation later in the token counting logic
                         important_files.push(format!("{}:{}", file_path, content));
-                    },
+                    }
                     Err(_) => {
                         // If we can't read as text, it might be binary
                         important_files.push(format!("{}:[Binary file - {} bytes]", file_path, metadata.len()));
@@ -154,32 +167,33 @@ fn op_get_important_files(#[string] repo_path: String, #[serde] file_paths: Vec<
 
 #[op2]
 #[string]
-fn op_cleanup_temp_directory(#[string] temp_dir: String) -> Result<String, deno_core::error::AnyError> {
+fn op_cleanup_temp_directory(#[string] temp_dir: String) -> Result<String, JsErrorBox> {
     if Path::new(&temp_dir).exists() {
-        fs::remove_dir_all(&temp_dir)?;
+        fs::remove_dir_all(&temp_dir).map_err(JsErrorBox::from_err)?;
         Ok(format!("Cleaned up temporary directory: {}", temp_dir))
     } else {
         Ok("Directory does not exist".to_string())
     }
 }
 
-// Helper functions
 fn count_files_recursive(dir_path: &str) -> Result<u64, std::io::Error> {
     let mut count = 0;
-    
+
     fn visit_dir(dir: &Path, count: &mut u64) -> Result<(), std::io::Error> {
         if dir.is_dir() {
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                
-                // Skip common directories to ignore
+
                 if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if matches!(dir_name, "node_modules" | "target" | ".git" | "__pycache__" | "dist" | "build") {
+                    if matches!(
+                        dir_name,
+                        "node_modules" | "target" | ".git" | "__pycache__" | "dist" | "build"
+                    ) {
                         continue;
                     }
                 }
-                
+
                 if path.is_dir() {
                     visit_dir(&path, count)?;
                 } else {
@@ -189,19 +203,19 @@ fn count_files_recursive(dir_path: &str) -> Result<u64, std::io::Error> {
         }
         Ok(())
     }
-    
+
     visit_dir(Path::new(dir_path), &mut count)?;
     Ok(count)
 }
 
 fn detect_languages(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
     let mut languages = std::collections::HashSet::new();
-    
+
     fn scan_directory(dir: &Path, languages: &mut std::collections::HashSet<String>) -> Result<(), std::io::Error> {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_dir() {
                 if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
                     if !matches!(dir_name, "node_modules" | "target" | ".git" | "__pycache__") {
@@ -210,24 +224,46 @@ fn detect_languages(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
                 }
             } else if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
                 match extension {
-                    "js" | "mjs" | "jsx" => { languages.insert("JavaScript".to_string()); }
-                    "ts" | "tsx" => { languages.insert("TypeScript".to_string()); }
-                    "py" => { languages.insert("Python".to_string()); }
-                    "rs" => { languages.insert("Rust".to_string()); }
-                    "go" => { languages.insert("Go".to_string()); }
-                    "java" => { languages.insert("Java".to_string()); }
-                    "cpp" | "cc" | "cxx" => { languages.insert("C++".to_string()); }
-                    "c" => { languages.insert("C".to_string()); }
-                    "cs" => { languages.insert("C#".to_string()); }
-                    "php" => { languages.insert("PHP".to_string()); }
-                    "rb" => { languages.insert("Ruby".to_string()); }
+                    "js" | "mjs" | "jsx" => {
+                        languages.insert("JavaScript".to_string());
+                    }
+                    "ts" | "tsx" => {
+                        languages.insert("TypeScript".to_string());
+                    }
+                    "py" => {
+                        languages.insert("Python".to_string());
+                    }
+                    "rs" => {
+                        languages.insert("Rust".to_string());
+                    }
+                    "go" => {
+                        languages.insert("Go".to_string());
+                    }
+                    "java" => {
+                        languages.insert("Java".to_string());
+                    }
+                    "cpp" | "cc" | "cxx" => {
+                        languages.insert("C++".to_string());
+                    }
+                    "c" => {
+                        languages.insert("C".to_string());
+                    }
+                    "cs" => {
+                        languages.insert("C#".to_string());
+                    }
+                    "php" => {
+                        languages.insert("PHP".to_string());
+                    }
+                    "rb" => {
+                        languages.insert("Ruby".to_string());
+                    }
                     _ => {}
                 }
             }
         }
         Ok(())
     }
-    
+
     scan_directory(Path::new(repo_path), &mut languages)?;
     Ok(languages.into_iter().collect())
 }
@@ -235,32 +271,39 @@ fn detect_languages(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
 fn find_config_files(repo_path: &str) -> Result<Vec<String>, std::io::Error> {
     let mut config_files = Vec::new();
     let config_patterns = vec![
-        "package.json", "Cargo.toml", "pyproject.toml", "requirements.txt",
-        "go.mod", "pom.xml", "build.gradle", "Dockerfile", "docker-compose.yml"
+        "package.json",
+        "Cargo.toml",
+        "pyproject.toml",
+        "requirements.txt",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "Dockerfile",
+        "docker-compose.yml",
     ];
-    
+
     for entry in fs::read_dir(repo_path)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
             if config_patterns.contains(&file_name) {
                 config_files.push(file_name.to_string());
             }
         }
     }
-    
+
     Ok(config_files)
 }
 
 fn calculate_directory_size(dir_path: &str) -> Result<u64, std::io::Error> {
     let mut total_size = 0;
-    
+
     fn visit_dir(dir: &Path, total: &mut u64) -> Result<(), std::io::Error> {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_dir() {
                 if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
                     if !matches!(dir_name, "node_modules" | "target" | ".git" | "__pycache__") {
@@ -273,7 +316,7 @@ fn calculate_directory_size(dir_path: &str) -> Result<u64, std::io::Error> {
         }
         Ok(())
     }
-    
+
     visit_dir(Path::new(dir_path), &mut total_size)?;
     Ok(total_size)
 }

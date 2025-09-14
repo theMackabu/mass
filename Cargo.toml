@@ -64,3 +64,4 @@ deno_runtime = { version = "0.222.0", features = [
   "only_snapshotted_js_sources",
   "snapshot",
 ] }
+deno_error = "0.7.0"

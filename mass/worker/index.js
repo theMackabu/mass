@@ -3,78 +3,228 @@ import { z } from 'https://esm.sh/zod@3';
 import { StreamableHTTPTransport } from 'https://esm.sh/@hono/mcp';
 import { McpServer, ResourceTemplate } from 'https://esm.sh/@modelcontextprotocol/sdk/server/mcp';
 
-// Import container orchestrator
-const ContainerOrchestrator = (await import('../docker/orchestrator.js')).default;
+class ContainerOrchestrator {
+  constructor() {
+    this.containers = new Map();
+    this.nextPort = 3001;
+  }
 
-// Helper functions for filesystem resource handling
+  // Generate unique container name
+  generateContainerName(repoId) {
+    return `mass-${repoId}-${Date.now()}`;
+  }
+
+  // Build Docker image from Dockerfile content
+  async buildImage(repoId, dockerfile, files) {
+    const containerName = this.generateContainerName(repoId);
+    const imageName = `mass/${repoId}:latest`;
+
+    try {
+      // Create temporary directory structure
+      const tempDir = `/tmp/mass-build-${containerName}`;
+
+      // This would typically use Docker API or CLI
+      // For now, we'll simulate the process
+      console.log(`Building image ${imageName} for repository ${repoId}`);
+      console.log(`Dockerfile preview:\n${dockerfile.slice(0, 300)}...`);
+
+      return {
+        success: true,
+        imageName,
+        containerName,
+        buildLog: `Successfully built image ${imageName}`,
+      };
+    } catch (error) {
+      throw new Error(`Failed to build image: ${error.message}`);
+    }
+  }
+
+  // Deploy container
+  async deployContainer(repoId, imageName, config = {}) {
+    const containerName = this.generateContainerName(repoId);
+    const port = config.port || this.nextPort++;
+
+    try {
+      // This would typically use Docker API
+      // Simulating container deployment
+      const containerInfo = {
+        id: containerName,
+        imageName,
+        port,
+        status: 'running',
+        createdAt: new Date().toISOString(),
+        repoId,
+        config,
+      };
+
+      this.containers.set(containerName, containerInfo);
+
+      console.log(`Deployed container ${containerName} on port ${port}`);
+
+      return {
+        success: true,
+        containerId: containerName,
+        port,
+        url: `http://localhost:${port}`,
+        status: 'running',
+      };
+    } catch (error) {
+      throw new Error(`Failed to deploy container: ${error.message}`);
+    }
+  }
+
+  // Stop and remove container
+  async stopContainer(containerId) {
+    const container = this.containers.get(containerId);
+    if (!container) {
+      throw new Error(`Container ${containerId} not found`);
+    }
+
+    try {
+      // This would typically use Docker API
+      console.log(`Stopping container ${containerId}`);
+
+      container.status = 'stopped';
+      container.stoppedAt = new Date().toISOString();
+
+      return {
+        success: true,
+        containerId,
+        message: 'Container stopped successfully',
+      };
+    } catch (error) {
+      throw new Error(`Failed to stop container: ${error.message}`);
+    }
+  }
+
+  // List all containers
+  listContainers(repoId = null) {
+    const containers = Array.from(this.containers.values());
+
+    if (repoId) {
+      return containers.filter(c => c.repoId === repoId);
+    }
+
+    return containers;
+  }
+
+  // Get container logs (simulated)
+  async getContainerLogs(containerId) {
+    const container = this.containers.get(containerId);
+    if (!container) {
+      throw new Error(`Container ${containerId} not found`);
+    }
+
+    // Simulate container logs
+    return [
+      `[${new Date().toISOString()}] Container ${containerId} started`,
+      `[${new Date().toISOString()}] Listening on port ${container.port}`,
+      `[${new Date().toISOString()}] Service ready`,
+    ].join('\n');
+  }
+
+  // Health check for container
+  async healthCheck(containerId) {
+    const container = this.containers.get(containerId);
+    if (!container) {
+      return { healthy: false, error: 'Container not found' };
+    }
+
+    // Simulate health check
+    return {
+      healthy: container.status === 'running',
+      status: container.status,
+      uptime: container.createdAt,
+      port: container.port,
+    };
+  }
+}
+
 function resolveWithinRoot(workspaceRoot, relPath) {
-  // Normalize path and remove leading slashes
   const cleaned = (relPath || '').replace(/^\/+/, '').replace(/\\/g, '/');
-  
-  // Join with workspace root
+
   const resolved = `${workspaceRoot}/${cleaned}`.replace(/\/+/g, '/');
-  
-  // Ensure it doesn't escape workspace root
+
   const normalizedWorkspace = workspaceRoot.replace(/\/+$/, '');
   const normalizedResolved = resolved.replace(/\/+$/, '');
-  
+
   if (!normalizedResolved.startsWith(normalizedWorkspace)) {
     throw new Error('Path outside workspace root');
   }
-  
+
   return resolved;
 }
 
 function isTextFile(filePath) {
-  const textExtensions = ['.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.txt', 
-                         '.yml', '.yaml', '.toml', '.py', '.rs', '.go', '.java',
-                         '.css', '.scss', '.html', '.svg', '.xml', '.sh', '.bash'];
+  const textExtensions = [
+    '.ts',
+    '.tsx',
+    '.js',
+    '.jsx',
+    '.json',
+    '.md',
+    '.txt',
+    '.yml',
+    '.yaml',
+    '.toml',
+    '.py',
+    '.rs',
+    '.go',
+    '.java',
+    '.css',
+    '.scss',
+    '.html',
+    '.svg',
+    '.xml',
+    '.sh',
+    '.bash',
+  ];
   const ext = filePath.toLowerCase().substring(filePath.lastIndexOf('.'));
   return textExtensions.includes(ext);
 }
 
-// Simple helper to run terminal commands
 async function runCommand(cmd, args, cwd = WORKSPACE_ROOT) {
   try {
     const command = new Deno.Command(cmd, {
       args,
       cwd,
-      stdout: "piped",
-      stderr: "piped"
+      stdout: 'piped',
+      stderr: 'piped',
     });
 
     const child = command.spawn();
     const { code, stdout, stderr } = await child.output();
-    
+
     const output = new TextDecoder().decode(stdout);
     const error = new TextDecoder().decode(stderr);
-    
+
     return { code, output, error };
   } catch (err) {
-    return { code: -1, output: "", error: err.message };
+    return { code: -1, output: '', error: err.message };
   }
 }
 
 // Get repository structure using tree command
 async function getRepositoryTree(workspacePath) {
   try {
-    const command = new Deno.Command("tree", {
+    const command = new Deno.Command('tree', {
       args: [
-        "-a",           // Show hidden files
-        "-I",           // Ignore patterns
-        "node_modules|target|.git|__pycache__|.venv|venv|dist|build",
-        "-L", "4",      // Max depth 4 levels
-        "--dirsfirst",  // Directories first
-        "-F",           // Add file type indicators
-        workspacePath
+        '-a', // Show hidden files
+        '-I', // Ignore patterns
+        'node_modules|target|.git|__pycache__|.venv|venv|dist|build',
+        '-L',
+        '4', // Max depth 4 levels
+        '--dirsfirst', // Directories first
+        '-F', // Add file type indicators
+        workspacePath,
       ],
-      stdout: "piped",
-      stderr: "piped"
+      stdout: 'piped',
+      stderr: 'piped',
     });
 
     const child = command.spawn();
     const { code, stdout, stderr } = await child.output();
-    
+
     if (code === 0) {
       return new TextDecoder().decode(stdout);
     } else {
@@ -82,7 +232,7 @@ async function getRepositoryTree(workspacePath) {
       return await getRepositoryListing(workspacePath);
     }
   } catch (error) {
-    console.warn("Tree command failed, using fallback:", error);
+    console.warn('Tree command failed, using fallback:', error);
     return await getRepositoryListing(workspacePath);
   }
 }
@@ -90,28 +240,38 @@ async function getRepositoryTree(workspacePath) {
 // Fallback directory listing if tree command not available
 async function getRepositoryListing(workspacePath) {
   try {
-    const command = new Deno.Command("find", {
+    const command = new Deno.Command('find', {
       args: [
         workspacePath,
-        "-type", "f",
-        "-not", "-path", "*/node_modules/*",
-        "-not", "-path", "*/target/*", 
-        "-not", "-path", "*/.git/*",
-        "-not", "-path", "*/__pycache__/*",
-        "-maxdepth", "3"
+        '-type',
+        'f',
+        '-not',
+        '-path',
+        '*/node_modules/*',
+        '-not',
+        '-path',
+        '*/target/*',
+        '-not',
+        '-path',
+        '*/.git/*',
+        '-not',
+        '-path',
+        '*/__pycache__/*',
+        '-maxdepth',
+        '3',
       ],
-      stdout: "piped",
-      stderr: "piped"
+      stdout: 'piped',
+      stderr: 'piped',
     });
 
     const child = command.spawn();
     const { code, stdout } = await child.output();
-    
+
     if (code === 0) {
       return new TextDecoder().decode(stdout);
     }
-    
-    return "Could not generate repository structure";
+
+    return 'Could not generate repository structure';
   } catch (error) {
     return `Error generating repository listing: ${error.message}`;
   }
@@ -122,35 +282,37 @@ async function createRepositoryArchive(repoId, workspacePath) {
   const timestamp = Date.now();
   const archiveName = `repo-${repoId}-${timestamp}.tar.gz`;
   const archivePath = `/tmp/${archiveName}`;
-  
+
   try {
-    const command = new Deno.Command("tar", {
+    const command = new Deno.Command('tar', {
       args: [
-        "-czf", archivePath,
-        "--exclude=node_modules",
-        "--exclude=target", 
-        "--exclude=.git",
-        "--exclude=__pycache__",
-        "--exclude=.venv",
-        "--exclude=venv",
-        "--exclude=dist",
-        "--exclude=build",
-        "--exclude=*.log",
-        "-C", workspacePath,
-        "."
+        '-czf',
+        archivePath,
+        '--exclude=node_modules',
+        '--exclude=target',
+        '--exclude=.git',
+        '--exclude=__pycache__',
+        '--exclude=.venv',
+        '--exclude=venv',
+        '--exclude=dist',
+        '--exclude=build',
+        '--exclude=*.log',
+        '-C',
+        workspacePath,
+        '.',
       ],
-      stdout: "piped",
-      stderr: "piped"
+      stdout: 'piped',
+      stderr: 'piped',
     });
 
     const child = command.spawn();
     const { code, stderr } = await child.output();
-    
+
     if (code !== 0) {
       const errorText = new TextDecoder().decode(stderr);
       throw new Error(`Tar command failed: ${errorText}`);
     }
-    
+
     return archivePath;
   } catch (error) {
     throw new Error(`Failed to create repository archive: ${error.message}`);
@@ -167,18 +329,18 @@ const WORKSPACE_ROOT = Deno.env.get('WORKSPACE_ROOT') || Deno.cwd();
 
 // Register repository filesystem resource with proper ResourceTemplate
 mcp.registerResource(
-  "repo",
-  new ResourceTemplate("repo://{path}", {
-    list: { path: "" }, // Advertise repo root for discovery
+  'repo',
+  new ResourceTemplate('repo://{path}', {
+    list: { path: '' }, // Advertise repo root for discovery
   }),
   {
-    title: "Repository",
-    description: "Browse and read files from the current repository workspace",
+    title: 'Repository',
+    description: 'Browse and read files from the current repository workspace',
   },
   async (uri, { path }) => {
     try {
       const fullPath = resolveWithinRoot(WORKSPACE_ROOT, path || '');
-      
+
       // Check if path exists
       let stat;
       try {
@@ -186,88 +348,95 @@ mcp.registerResource(
       } catch (error) {
         throw new Error(`File not found: ${path || 'root'}`);
       }
-      
+
       // Handle directories - return listing as JSON
       if (stat.isDirectory) {
         const entries = [];
         for await (const entry of Deno.readDir(fullPath)) {
           // Skip hidden files and common ignore patterns
-          if (entry.name.startsWith('.') || 
-              entry.name === 'node_modules' || 
-              entry.name === 'target' ||
-              entry.name === '__pycache__' ||
-              entry.name === '.venv' ||
-              entry.name === 'venv' ||
-              entry.name === 'dist' ||
-              entry.name === 'build') {
+          if (
+            entry.name.startsWith('.') ||
+            entry.name === 'node_modules' ||
+            entry.name === 'target' ||
+            entry.name === '__pycache__' ||
+            entry.name === '.venv' ||
+            entry.name === 'venv' ||
+            entry.name === 'dist' ||
+            entry.name === 'build'
+          ) {
             continue;
           }
-          
+
           const entryPath = path ? `${path}/${entry.name}` : entry.name;
           const entryFullPath = `${fullPath}/${entry.name}`;
-          
+
           let entryStat;
           try {
             entryStat = await Deno.stat(entryFullPath);
           } catch {
             continue; // Skip if can't stat
           }
-          
+
           entries.push({
             name: entry.name,
             path: entryPath,
             isDirectory: entry.isDirectory,
             size: entryStat.size,
             modified: entryStat.mtime?.toISOString(),
-            uri: `repo://${entryPath}`
+            uri: `repo://${entryPath}`,
           });
         }
-        
+
         return {
-          contents: [{
-            uri: uri.href,
-            mimeType: 'application/json',
-            text: JSON.stringify(entries, null, 2)
-          }]
+          contents: [
+            {
+              uri: uri.href,
+              mimeType: 'application/json',
+              text: JSON.stringify(entries, null, 2),
+            },
+          ],
         };
       }
-      
+
       // Handle files - return content
       if (stat.isFile) {
         const data = await Deno.readFile(fullPath);
-        
+
         // Return as text if it's a text file, otherwise as base64 blob
         if (isTextFile(fullPath)) {
           const text = new TextDecoder().decode(data);
           return {
-            contents: [{
-              uri: uri.href,
-              mimeType: 'text/plain',
-              text
-            }]
+            contents: [
+              {
+                uri: uri.href,
+                mimeType: 'text/plain',
+                text,
+              },
+            ],
           };
         } else {
           // Binary file - return as base64 blob
           const uint8Array = new Uint8Array(data);
           const binaryString = Array.from(uint8Array, byte => String.fromCharCode(byte)).join('');
           const base64 = btoa(binaryString);
-          
+
           return {
-            contents: [{
-              uri: uri.href,
-              mimeType: 'application/octet-stream',
-              blob: base64
-            }]
+            contents: [
+              {
+                uri: uri.href,
+                mimeType: 'application/octet-stream',
+                blob: base64,
+              },
+            ],
           };
         }
       }
-      
+
       throw new Error(`Invalid file type: ${path || 'root'}`);
-      
     } catch (error) {
       throw new Error(`Failed to read resource: ${error.message}`);
     }
-  }
+  },
 );
 
 // Repository storage system
@@ -275,7 +444,6 @@ const repositories = new Map();
 
 // Container orchestrator instance
 const orchestrator = new ContainerOrchestrator();
-
 
 // 🚀 Tool 1: Generate complete MCP server with analysis, tools, and documentation
 mcp.registerTool(
@@ -305,7 +473,7 @@ mcp.registerTool(
 
       // Use LLM-based intelligent file selection by calling the Python agent
       let selectedFiles = [];
-      let importantFiles = "";
+      let importantFiles = '';
 
       try {
         // First get file selection from LLM
@@ -315,33 +483,39 @@ mcp.registerTool(
           description: description,
           tree_structure: treeOutput,
           analysis: analysis,
-          openai_api_key: Deno.env.get('OPENAI_API_KEY') || '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',
+          openai_api_key:
+            Deno.env.get('OPENAI_API_KEY') ||
+            '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',
           openai_base_url: Deno.env.get('OPENAI_BASE_URL') || 'https://api.groq.com/openai/v1',
-          openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b'
+          openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b',
         };
 
         // Call Python agent to get selected file paths
-        const fileSelectionCommand = new Deno.Command("uv", {
-          args: ["run", "agent.py", "select-files"],
-          stdin: "piped",
-          stdout: "piped",
-          stderr: "piped",
-          cwd: "/Users/phytal/Projects/mass/llm"
+        const fileSelectionCommand = new Deno.Command('uv', {
+          args: ['run', 'agent.py', 'select-files'],
+          stdin: 'piped',
+          stdout: 'piped',
+          stderr: 'piped',
+          cwd: `${Deno.cwd()}/llm`,
         });
 
         const fileSelectionChild = fileSelectionCommand.spawn();
         const fileSelectionWriter = fileSelectionChild.stdin.getWriter();
-        await fileSelectionWriter.write(new TextEncoder().encode(JSON.stringify(fileSelectionInput)));
+        await fileSelectionWriter.write(
+          new TextEncoder().encode(JSON.stringify(fileSelectionInput)),
+        );
         await fileSelectionWriter.close();
 
         const fileSelectionOutput = await fileSelectionChild.output();
 
         if (fileSelectionOutput.code === 0) {
-          const fileSelectionResult = JSON.parse(new TextDecoder().decode(fileSelectionOutput.stdout));
+          const fileSelectionResult = JSON.parse(
+            new TextDecoder().decode(fileSelectionOutput.stdout),
+          );
           selectedFiles = fileSelectionResult.selected_files || [];
           console.log(`LLM selected ${selectedFiles.length} files for analysis`);
         } else {
-          console.warn("LLM file selection failed, falling back to pattern-based selection");
+          console.warn('LLM file selection failed, falling back to pattern-based selection');
           // Fallback to pattern-based selection
           importantFiles = await MASS.ops.op_get_important_files_by_pattern(tempDir, maxFiles);
         }
@@ -350,9 +524,8 @@ mcp.registerTool(
         if (selectedFiles.length > 0) {
           importantFiles = await MASS.ops.op_get_important_files(tempDir, selectedFiles);
         }
-
       } catch (error) {
-        console.warn("LLM file selection failed:", error);
+        console.warn('LLM file selection failed:', error);
         // Fallback to pattern-based selection
         importantFiles = await MASS.ops.op_get_important_files_by_pattern(tempDir, maxFiles);
       }
@@ -384,46 +557,59 @@ mcp.registerTool(
       await MASS.ops.op_cleanup_temp_directory(tempDir);
 
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            repoId,
-            analysis: {
-              file_count: analysis.file_count,
-              languages: analysis.languages,
-              config_files: analysis.config_files,
-              size_bytes: analysis.size_bytes,
-              frameworks: analysis.frameworks || []
-            },
-            generatedTools: intelligentAnalysis.mcp_tools?.map(tool => ({
-              name: tool.name,
-              title: tool.title,
-              description: tool.description,
-              input_schema: tool.input_schema,
-              category: tool.category,
-              usage: `await mcp.callTool('${tool.name}', ${JSON.stringify(tool.example_input || {})})`
-            })) || [],
-            documentation: intelligentAnalysis.documentation || {},
-            serverGenerated: !!intelligentAnalysis.server_template,
-            toolsCount: intelligentAnalysis.mcp_tools?.length || 0,
-            message: `Generated complete MCP server with ${intelligentAnalysis.mcp_tools?.length || 0} tools and comprehensive documentation. Ready for deployment.`
-          }, null, 2)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                repoId,
+                analysis: {
+                  file_count: analysis.file_count,
+                  languages: analysis.languages,
+                  config_files: analysis.config_files,
+                  size_bytes: analysis.size_bytes,
+                  frameworks: analysis.frameworks || [],
+                },
+                generatedTools:
+                  intelligentAnalysis.mcp_tools?.map(tool => ({
+                    name: tool.name,
+                    title: tool.title,
+                    description: tool.description,
+                    input_schema: tool.input_schema,
+                    category: tool.category,
+                    usage: `await mcp.callTool('${tool.name}', ${JSON.stringify(tool.example_input || {})})`,
+                  })) || [],
+                documentation: intelligentAnalysis.documentation || {},
+                serverGenerated: !!intelligentAnalysis.server_template,
+                toolsCount: intelligentAnalysis.mcp_tools?.length || 0,
+                message: `Generated complete MCP server with ${intelligentAnalysis.mcp_tools?.length || 0} tools and comprehensive documentation. Ready for deployment.`,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
     } catch (error) {
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: error.message,
-            repoId
-          }, null, 2)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: false,
+                error: error.message,
+                repoId,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
     }
-  }
+  },
 );
 
 // 🚀 Tool 3: Store and deploy repository as regular container (independent workflow)
@@ -431,7 +617,8 @@ mcp.registerTool(
   'deploy-repository',
   {
     title: 'Store and Deploy Repository Container',
-    description: 'Store external repository structure and deploy as regular application container (not MCP server)',
+    description:
+      'Store external repository structure and deploy as regular application container (not MCP server)',
     inputSchema: {
       repoId: z.string().describe('Unique identifier for the repository'),
       files: z.record(z.string()).describe('Object mapping file paths to their content'),
@@ -476,44 +663,60 @@ mcp.registerTool(
 
       // Ensure we have a Dockerfile for deployment
       if (!repo.dockerfile) {
-        throw new Error(`No Dockerfile available for repository ${repoId}. Unable to deploy without build instructions.`);
+        throw new Error(
+          `No Dockerfile available for repository ${repoId}. Unable to deploy without build instructions.`,
+        );
       }
 
       // Build and deploy using the container orchestrator
       const buildResult = await orchestrator.buildImage(repoId, repo.dockerfile, repo.files);
-      const deployResult = await orchestrator.deployContainer(repoId, buildResult.imageName, { port });
+      const deployResult = await orchestrator.deployContainer(repoId, buildResult.imageName, {
+        port,
+      });
 
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            repoId,
-            filesStored: Object.keys(repo.files).length,
-            containerId: deployResult.containerId,
-            url: deployResult.url,
-            port: deployResult.port,
-            status: deployResult.status,
-            apiEndpoints: repo.apiEndpoints?.length || 0,
-            languages: repo.fileStructure?.languages || [],
-            frameworks: repo.fileStructure?.frameworks || [],
-            message: 'Repository stored and deployed successfully as application container'
-          }, null, 2)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                repoId,
+                filesStored: Object.keys(repo.files).length,
+                containerId: deployResult.containerId,
+                url: deployResult.url,
+                port: deployResult.port,
+                status: deployResult.status,
+                apiEndpoints: repo.apiEndpoints?.length || 0,
+                languages: repo.fileStructure?.languages || [],
+                frameworks: repo.fileStructure?.frameworks || [],
+                message: 'Repository stored and deployed successfully as application container',
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
     } catch (error) {
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: error.message,
-            repoId
-          }, null, 2)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: false,
+                error: error.message,
+                repoId,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
     }
-  }
+  },
 );
 
 // 📋 Helper Tools for repository management
@@ -532,24 +735,28 @@ mcp.registerTool(
       projectName: repo.projectName,
       description: repo.description,
       storedAt: repo.storedAt,
-      analysis: repo.analysis ? {
-        projectType: repo.analysis.project_type,
-        languages: repo.analysis.languages,
-        frameworks: repo.analysis.frameworks || [],
-        fileCount: repo.analysis.file_count
-      } : null,
+      analysis: repo.analysis
+        ? {
+            projectType: repo.analysis.project_type,
+            languages: repo.analysis.languages,
+            frameworks: repo.analysis.frameworks || [],
+            fileCount: repo.analysis.file_count,
+          }
+        : null,
       generatedToolsCount: repo.generatedTools?.length || 0,
       hasDockerfile: !!repo.dockerfile,
-      hasDeployment: !!repo.deployment
+      hasDeployment: !!repo.deployment,
     }));
 
     return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify(repos, null, 2)
-      }]
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(repos, null, 2),
+        },
+      ],
     };
-  }
+  },
 );
 
 // Get specific generated MCP tools for a repository
@@ -566,42 +773,54 @@ mcp.registerTool(
     const repo = repositories.get(repoId);
     if (!repo) {
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: `Repository ${repoId} not found`
-          }, null, 2)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: false,
+                error: `Repository ${repoId} not found`,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
     }
 
     return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          success: true,
-          repoId,
-          tools: repo.generatedTools?.map(tool => ({
-            name: tool.name,
-            title: tool.title,
-            description: tool.description,
-            category: tool.category,
-            input_schema: tool.input_schema
-          })) || [],
-          toolsCount: repo.generatedTools?.length || 0
-        }, null, 2)
-      }]
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              repoId,
+              tools:
+                repo.generatedTools?.map(tool => ({
+                  name: tool.name,
+                  title: tool.title,
+                  description: tool.description,
+                  category: tool.category,
+                  input_schema: tool.input_schema,
+                })) || [],
+              toolsCount: repo.generatedTools?.length || 0,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
-  }
+  },
 );
 
-
-// Call Intelligent OpenAI Agent for comprehensive analysis and MCP generation  
+// Call Intelligent OpenAI Agent for comprehensive analysis and MCP generation
 async function callIntelligentAgent(repoId) {
   const repo = repositories.get(repoId);
   if (!repo) throw new Error(`Repository ${repoId} not found`);
-  
+
   // Prepare streamlined input for Python agent
   const agentInput = {
     repo_id: repoId,
@@ -612,22 +831,23 @@ async function callIntelligentAgent(repoId) {
     important_files: repo.importantFiles.slice(0, 15), // More files for better context
     workspace_path: repo.workspacePath,
     // OpenAI configuration - using Groq for fast inference
-    openai_api_key: Deno.env.get('OPENAI_API_KEY') || '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',
+    openai_api_key:
+      Deno.env.get('OPENAI_API_KEY') || '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',
     openai_base_url: Deno.env.get('OPENAI_BASE_URL') || 'https://api.groq.com/openai/v1',
-    openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b' // Groq's fastest model
+    openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b', // Groq's fastest model
   };
 
   // Call Python LLM agent using uv run
-  const command = new Deno.Command("uv", {
-    args: ["run", "agent.py", "analyze-and-generate"],
-    stdin: "piped",
-    stdout: "piped", 
-    stderr: "piped",
-    cwd: "/Users/phytal/Projects/mass/llm"
+  const command = new Deno.Command('uv', {
+    args: ['run', 'agent.py', 'analyze-and-generate'],
+    stdin: 'piped',
+    stdout: 'piped',
+    stderr: 'piped',
+    cwd: `${Deno.cwd()}/llm`,
   });
 
   const child = command.spawn();
-  
+
   // Send input to Python process
   const writer = child.stdin.getWriter();
   const encoder = new TextEncoder();
@@ -636,7 +856,7 @@ async function callIntelligentAgent(repoId) {
 
   // Get output from Python process
   const { code, stdout, stderr } = await child.output();
-  
+
   if (code !== 0) {
     const errorText = new TextDecoder().decode(stderr);
     throw new Error(`Python agent failed: ${errorText}`);
@@ -644,7 +864,7 @@ async function callIntelligentAgent(repoId) {
 
   const outputText = new TextDecoder().decode(stdout);
   const result = JSON.parse(outputText);
-  
+
   if (!result.success) {
     throw new Error(`Python agent error: ${result.error}`);
   }
@@ -654,7 +874,7 @@ async function callIntelligentAgent(repoId) {
   repo.dockerfile = result.dockerfile;
   repo.aiAnalysis = result.ai_analysis;
   repositories.set(repoId, repo);
-  
+
   return result.mcp_tools;
 }
 
@@ -731,35 +951,42 @@ function extractApiEndpoints(files) {
     const content = files[filePath];
 
     // Express.js style endpoints
-    const expressMatches = content.matchAll(/(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g);
+    const expressMatches = content.matchAll(
+      /(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g,
+    );
     for (const match of expressMatches) {
       endpoints.push({
         method: match[1].toUpperCase(),
         path: match[2],
         file: filePath,
-        framework: 'Express'
+        framework: 'Express',
       });
     }
 
     // FastAPI style endpoints
-    const fastapiMatches = content.matchAll(/@app\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g);
+    const fastapiMatches = content.matchAll(
+      /@app\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g,
+    );
     for (const match of fastapiMatches) {
       endpoints.push({
         method: match[1].toUpperCase(),
         path: match[2],
         file: filePath,
-        framework: 'FastAPI'
+        framework: 'FastAPI',
       });
     }
 
     // Next.js API routes (file-based routing)
     if (filePath.includes('/api/') && (filePath.endsWith('.js') || filePath.endsWith('.ts'))) {
-      const route = filePath.replace(/.*\/api/, '').replace(/\.(js|ts)$/, '').replace(/\/index$/, '');
+      const route = filePath
+        .replace(/.*\/api/, '')
+        .replace(/\.(js|ts)$/, '')
+        .replace(/\/index$/, '');
       endpoints.push({
         method: 'MULTIPLE',
         path: `/api${route || '/'}`,
         file: filePath,
-        framework: 'Next.js'
+        framework: 'Next.js',
       });
     }
   }
@@ -780,16 +1007,16 @@ async function generateDockerfileForFiles(repo) {
     // OpenAI configuration
     openai_api_key: Deno.env.get('OPENAI_API_KEY'),
     openai_base_url: Deno.env.get('OPENAI_BASE_URL') || 'https://api.groq.com/openai/v1',
-    openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b'
+    openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b',
   };
 
   // Call Python agent for Dockerfile generation
-  const command = new Deno.Command("uv", {
-    args: ["run", "agent.py", "generate-dockerfile"],
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-    cwd: "/Users/phytal/Projects/mass/llm"
+  const command = new Deno.Command('uv', {
+    args: ['run', 'agent.py', 'generate-dockerfile'],
+    stdin: 'piped',
+    stdout: 'piped',
+    stderr: 'piped',
+    cwd: `${Deno.cwd()}/llm`,
   });
 
   const child = command.spawn();
@@ -815,9 +1042,8 @@ async function generateDockerfileForFiles(repo) {
     throw new Error(`Python agent error: ${result.error}`);
   }
 
-  return result.dockerfile || "# Dockerfile generation failed";
+  return result.dockerfile || '# Dockerfile generation failed';
 }
-
 
 // List deployed containers
 mcp.registerTool(
@@ -831,14 +1057,16 @@ mcp.registerTool(
   },
   async ({ repoId }) => {
     const containers = orchestrator.listContainers(repoId);
-    
+
     return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify(containers, null, 2)
-      }]
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(containers, null, 2),
+        },
+      ],
     };
-  }
+  },
 );
 
 // Stop container
@@ -854,26 +1082,34 @@ mcp.registerTool(
   async ({ containerId }) => {
     try {
       const result = await orchestrator.stopContainer(containerId);
-      
+
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify(result, null, 2)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
       };
     } catch (error) {
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: error.message,
-            containerId
-          }, null, 2)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: false,
+                error: error.message,
+                containerId,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
     }
-  }
+  },
 );
 
 // Get container logs
@@ -889,24 +1125,27 @@ mcp.registerTool(
   async ({ containerId }) => {
     try {
       const logs = await orchestrator.getContainerLogs(containerId);
-      
+
       return {
-        content: [{
-          type: 'text',
-          text: logs
-        }]
+        content: [
+          {
+            type: 'text',
+            text: logs,
+          },
+        ],
       };
     } catch (error) {
       return {
-        content: [{
-          type: 'text',
-          text: `Error getting logs: ${error.message}`
-        }]
+        content: [
+          {
+            type: 'text',
+            text: `Error getting logs: ${error.message}`,
+          },
+        ],
       };
     }
-  }
+  },
 );
-
 
 // 🚀 Tool 2: Deploy the generated MCP server as a standalone service
 mcp.registerTool(
@@ -916,8 +1155,14 @@ mcp.registerTool(
     description: 'Deploy the AI-generated MCP server for a repository as a standalone service',
     inputSchema: {
       repoId: z.string().describe('Repository ID with generated MCP server'),
-      subdomain: z.string().optional().describe('Subdomain for the deployed server (auto-generated if not provided)'),
-      port: z.number().optional().describe('Port for the deployed server (auto-assigned if not provided)'),
+      subdomain: z
+        .string()
+        .optional()
+        .describe('Subdomain for the deployed server (auto-generated if not provided)'),
+      port: z
+        .number()
+        .optional()
+        .describe('Port for the deployed server (auto-assigned if not provided)'),
     },
   },
   async ({ repoId, subdomain, port }) => {
@@ -928,12 +1173,14 @@ mcp.registerTool(
       }
 
       if (!repo.serverTemplate || Object.keys(repo.serverTemplate).length === 0) {
-        throw new Error(`No MCP server template generated for repository ${repoId}. Run generate-mcp-server first.`);
+        throw new Error(
+          `No MCP server template generated for repository ${repoId}. Run generate-mcp-server first.`,
+        );
       }
 
       // Auto-generate subdomain and port if not provided
       const deploySubdomain = subdomain || `${repoId}-mcp`;
-      const deployPort = port || (3000 + Math.floor(Math.random() * 1000));
+      const deployPort = port || 3000 + Math.floor(Math.random() * 1000);
 
       // Create deployment directory
       const deploymentId = `mcp-${repoId}-${Date.now()}`;
@@ -953,55 +1200,67 @@ mcp.registerTool(
         url: `http://${deploySubdomain}.localhost:${deployPort}`,
         containerId: containerResult.containerId,
         deployedAt: new Date().toISOString(),
-        status: 'running'
+        status: 'running',
       };
       repositories.set(repoId, repo);
 
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            repoId,
-            deployment: repo.deployment,
-            connectionInstructions: {
-              httpConnection: {
-                url: repo.deployment.url,
-                description: "Connect via HTTP for web integrations"
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                repoId,
+                deployment: repo.deployment,
+                connectionInstructions: {
+                  httpConnection: {
+                    url: repo.deployment.url,
+                    description: 'Connect via HTTP for web integrations',
+                  },
+                  stdioConnection: {
+                    command: `deno run --allow-net ${repo.deployment.url}/stdio`,
+                    description: 'Connect via stdio for editors like Cursor',
+                  },
+                  dockerConnection: {
+                    command: `docker run -p ${deployPort}:${deployPort} mcp-server-${deploymentId}`,
+                    description: 'Run locally with Docker',
+                  },
+                },
+                availableTools: repo.generatedTools?.map(tool => tool.name) || [],
+                usageExample: {
+                  connect: `const mcp = new McpClient('${repo.deployment.url}')`,
+                  callTool: repo.generatedTools?.[0]
+                    ? `await mcp.callTool('${repo.generatedTools[0].name}', ${JSON.stringify(repo.generatedTools[0].example_input || {})})`
+                    : "await mcp.callTool('generated-tool-name', {...})",
+                },
+                message: `MCP server deployed successfully! Connect using the instructions above.`,
               },
-              stdioConnection: {
-                command: `deno run --allow-net ${repo.deployment.url}/stdio`,
-                description: "Connect via stdio for editors like Cursor"
-              },
-              dockerConnection: {
-                command: `docker run -p ${deployPort}:${deployPort} mcp-server-${deploymentId}`,
-                description: "Run locally with Docker"
-              }
-            },
-            availableTools: repo.generatedTools?.map(tool => tool.name) || [],
-            usageExample: {
-              connect: `const mcp = new McpClient('${repo.deployment.url}')`,
-              callTool: repo.generatedTools?.[0]
-                ? `await mcp.callTool('${repo.generatedTools[0].name}', ${JSON.stringify(repo.generatedTools[0].example_input || {})})`
-                : "await mcp.callTool('generated-tool-name', {...})"
-            },
-            message: `MCP server deployed successfully! Connect using the instructions above.`
-          }, null, 2)
-        }]
+              null,
+              2,
+            ),
+          },
+        ],
       };
     } catch (error) {
       return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: error.message,
-            repoId
-          }, null, 2)
-        }]
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: false,
+                error: error.message,
+                repoId,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
     }
-  }
+  },
 );
 
 // Get generated documentation as MCP resource
@@ -1022,24 +1281,30 @@ mcp.registerTool(
       }
 
       if (!repo.documentation) {
-        throw new Error(`No documentation generated for repository ${repoId}. Run analyze-repository first.`);
+        throw new Error(
+          `No documentation generated for repository ${repoId}. Run analyze-repository first.`,
+        );
       }
 
       return {
-        content: [{
-          type: 'text',
-          text: repo.documentation
-        }]
+        content: [
+          {
+            type: 'text',
+            text: repo.documentation,
+          },
+        ],
       };
     } catch (error) {
       return {
-        content: [{
-          type: 'text',
-          text: `Error retrieving documentation: ${error.message}`
-        }]
+        content: [
+          {
+            type: 'text',
+            text: `Error retrieving documentation: ${error.message}`,
+          },
+        ],
       };
     }
-  }
+  },
 );
 
 // List deployed MCP servers
@@ -1060,16 +1325,18 @@ mcp.registerTool(
         status: repo.deployment.status,
         port: repo.deployment.port,
         mcpTools: repo.generatedTools?.length || 0,
-        deployedAt: repo.deployment.deployedAt
+        deployedAt: repo.deployment.deployedAt,
       }));
 
     return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify(deployedServers, null, 2)
-      }]
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(deployedServers, null, 2),
+        },
+      ],
     };
-  }
+  },
 );
 
 // tool for testing
@@ -1092,11 +1359,11 @@ mcp.registerTool(
 async function createMCPDeployment(repo, deployDir, port) {
   try {
     // Create deployment directory
-    await runCommand("mkdir", ["-p", deployDir]);
+    await runCommand('mkdir', ['-p', deployDir]);
 
     // Write all generated server files
     const serverFiles = repo.serverTemplate;
-    
+
     for (const [filename, content] of Object.entries(serverFiles)) {
       const filePath = `${deployDir}/${filename}`;
       await Deno.writeTextFile(filePath, content);
@@ -1112,9 +1379,8 @@ async function createMCPDeployment(repo, deployDir, port) {
     return {
       success: true,
       deployDir,
-      files: Object.keys(serverFiles)
+      files: Object.keys(serverFiles),
     };
-
   } catch (error) {
     throw new Error(`Failed to create MCP deployment: ${error.message}`);
   }
@@ -1127,24 +1393,23 @@ async function deployMCPContainer(deploymentId, deployDir, port) {
     const containerName = `mcp-container-${deploymentId}`;
 
     // Build Docker image
-    const buildResult = await runCommand("docker", [
-      "build", 
-      "-t", imageName,
-      deployDir
-    ]);
+    const buildResult = await runCommand('docker', ['build', '-t', imageName, deployDir]);
 
     if (buildResult.code !== 0) {
       throw new Error(`Docker build failed: ${buildResult.error}`);
     }
 
     // Run container
-    const runResult = await runCommand("docker", [
-      "run",
-      "-d",
-      "--name", containerName,
-      "-p", `${port}:${port}`,
-      "--restart", "unless-stopped",
-      imageName
+    const runResult = await runCommand('docker', [
+      'run',
+      '-d',
+      '--name',
+      containerName,
+      '-p',
+      `${port}:${port}`,
+      '--restart',
+      'unless-stopped',
+      imageName,
     ]);
 
     if (runResult.code !== 0) {
@@ -1159,9 +1424,8 @@ async function deployMCPContainer(deploymentId, deployDir, port) {
       containerId,
       imageName,
       containerName,
-      port
+      port,
     };
-
   } catch (error) {
     throw new Error(`Failed to deploy MCP container: ${error.message}`);
   }
