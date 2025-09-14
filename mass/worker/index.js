@@ -277,11 +277,10 @@ async function getRepositoryListing(workspacePath) {
   }
 }
 
-// Download GitHub repository to persistent directory
+// Download GitHub repository to MCP server template directory
 async function downloadGitHubRepo(githubUrl, repoId) {
-  // Use a persistent directory under the project root
-  const reposDir = `${Deno.cwd()}/mass/repos`;
-  const repoDir = `${reposDir}/${repoId}`;
+  // Download to llm/mcp_server_template/ so it works with existing template
+  const repoDir = `${Deno.cwd()}/llm/mcp_server_template/${repoId}`;
 
   try {
     // Parse GitHub URL to get owner/repo
@@ -296,8 +295,8 @@ async function downloadGitHubRepo(githubUrl, repoId) {
       throw new Error('URL must be a GitHub repository');
     }
 
-    // Create persistent repos directory
-    await Deno.mkdir(reposDir, { recursive: true });
+    // Create mcp_server_template directory if it doesn't exist
+    await Deno.mkdir(`${Deno.cwd()}/llm/mcp_server_template`, { recursive: true });
 
     // Check if repo already exists, if so remove it first for fresh clone
     try {
@@ -612,7 +611,7 @@ mcp.registerTool(
       const repo = repositories.get(repoId);
       repo.generatedTools = intelligentAnalysis.mcp_tools;
       repo.documentation = intelligentAnalysis.documentation;
-      repo.serverTemplate = intelligentAnalysis.server_template;
+      // Note: Only generate Dockerfile, not full server template
       repositories.set(repoId, repo);
 
       console.log(`✅ Repository ${repoId} persisted at: ${repo.workspacePath}`);
@@ -642,9 +641,8 @@ mcp.registerTool(
                     usage: `await mcp.callTool('${tool.name}', ${JSON.stringify(tool.example_input || {})})`,
                   })),
                 documentation: intelligentAnalysis.documentation,
-                serverGenerated: !!intelligentAnalysis.server_template,
                 toolsCount: intelligentAnalysis.mcp_tools.length,
-                message: `Generated complete MCP server with ${intelligentAnalysis.mcp_tools.length} tools and comprehensive documentation. Ready for deployment.`,
+                message: `Generated MCP tools and documentation with ${intelligentAnalysis.mcp_tools.length} tools. Ready for deployment.`,
               },
               null,
               2,

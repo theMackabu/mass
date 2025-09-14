@@ -810,23 +810,14 @@ async def main():
                 }
             )
 
-            # Step 6: Generate deployable MCP server
-            server_template = await agent.generate_mcp_server_template(
-                mcp_tools,
-                documentation, 
-                {
-                    "project_name": input_data.get("project_name"),
-                    "repo_id": input_data["repo_id"]
-                }
-            )
-            
+            # Note: Skip server template generation - using existing @llm/mcp_server_template/
+
             result = {
                 "success": True,
                 "repo_id": input_data["repo_id"],
                 "codebase_analysis": codebase_analysis,
                 "mcp_tools": mcp_tools,
                 "documentation": documentation,
-                "server_template": server_template,
                 "summary": {
                     "api_endpoints": len(codebase_analysis.get("api_endpoints", [])),
                     "mcp_tools": len(mcp_tools),
