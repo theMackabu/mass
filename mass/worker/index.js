@@ -1445,7 +1445,5 @@ MASS.app.all('/socket', async c => {
   return transport.handleRequest(c);
 });
 
-// Only serve if this is the main module
-if (import.meta.main) {
-  Deno.serve({ port: MASS.config.port() }, MASS.app.fetch);
-}
+console.log(`Started server on port ${MASS.config.port()}`);
+Deno.serve({ port: MASS.config.port() }, MASS.app.fetch);

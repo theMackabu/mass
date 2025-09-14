@@ -75,9 +75,13 @@ pub async fn start_runtime() -> Result<(), CoreError> {
         .load_main_es_module_from_code(&main_module, WORKER_CODE)
         .await?;
 
+    println!("MASS esm loaded into memory");
+
     if let Err(_) = with_timeout(|| worker.js_runtime.run_event_loop(PollEventLoopOptions::default())).await {
         eprintln!("JavaScript event loop timed out after 500ms");
     }
+
+    println!("MASS es_module event loop loaded");
 
     worker.evaluate_module(id).await?;
     worker.run_event_loop(false).await?;
