@@ -23,7 +23,22 @@ Cursor IDE → Worker (Deno/JS) → Python LLM Agent → OpenAI → Generated MC
 
 2. **Configure OpenAI (multiple options):**
    
-   **Option A: Standard OpenAI API**
+   **Option A: Environment Variables (Recommended)**
+   ```bash
+   # Copy the example file and edit with your API key
+   cp llm/.env.example llm/.env
+   # Edit llm/.env with your API key
+   ```
+   
+   **Option B: Manual Export (Groq - Ultra Fast)**
+   ```bash
+   export OPENAI_API_KEY="your-groq-api-key"
+   export OPENAI_BASE_URL="https://api.groq.com/openai/v1"
+   export OPENAI_MODEL="openai/gpt-oss-120b"
+   # 🚀 10-100x faster than OpenAI, free tier available
+   ```
+   
+   **Option B: Standard OpenAI API**
    ```bash
    export OPENAI_API_KEY="your-openai-api-key"
    # Uses: https://api.openai.com/v1
@@ -106,101 +121,233 @@ const srcListing = await mcp.readResource('repo://src');
 - **Text files**: Plain text with `text/plain` MIME type  
 - **Binary files**: Base64 blob with `application/octet-stream` MIME type
 
-## Available MCP Tools
+## Streamlined MCP Workflow: Two Core Tools
 
-### Streamlined Repository Analysis
+### 🚀 **Tool 1: `generate-mcp-server`**
 
-#### 1. get-repo-tree
-Get the file tree structure using the `tree` command.
+The user calls this single tool to analyze their repository and build the complete MCP server:
 
-**Parameters:** None
+```javascript
+await mcp.callTool('generate-mcp-server', {
+  repoId: 'my-awesome-project',
+  projectName: 'My Awesome Project',
+  description: 'A React frontend with Express.js backend',
+  maxFiles: 20  // Optional: limit important files analyzed
+});
+```
 
-**What it does:**
-- Executes `tree -a -I "node_modules|target|.git" -L 4` command
-- Returns clean directory structure visualization
-- Skips common build/dependency directories
-- Falls back to `find` if tree command unavailable
+**What happens behind the scenes:**
+1. Creates `tar.gz` archive of the repository
+2. Extracts and analyzes using Rust operations
+3. Detects languages, frameworks, config files
+4. Identifies important files (package.json, main.js, etc.)
+5. Calls Python LLM agent for intelligent analysis
+6. Generates contextual MCP tools based on detected patterns
+7. Creates complete documentation
+8. Builds deployable MCP server files
 
-#### 2. analyze-repository ⭐ **RECOMMENDED**
-Complete repository analysis using tar.gz archive and Rust processing.
-
-**Parameters:**
-- `repoId` (string): Unique identifier for the repository
-- `projectName` (string, optional): Project name  
-- `description` (string, optional): Project description
-- `maxFiles` (number, optional): Maximum important files to extract (default: 20)
-
-**What it does:**
-1. **Creates tar.gz archive** using `tar -czf` with smart exclusions
-2. **Extracts to temp directory** using Rust tar/gzip operations
-3. **Analyzes with Rust**: File count, languages, config files, size
-4. **Extracts important files**: Configuration, entry points, README
-5. **Generates MCP tools** using Python LLM agent with structured data
-6. **Cleans up** temporary files automatically
-
-**Advantages:**
-- ⚡ **Fast**: No recursive file traversal in JavaScript
-- 🗜️ **Efficient**: Compressed archive transfer
-- 🦀 **Reliable**: Rust-powered analysis operations
-- 🧠 **Smart**: LLM receives structured data, not raw files
-
-#### 2. store-repository
-Stores externally provided repository structure (for Cursor IDE integration).
-
-**Parameters:**
-- `repoId` (string): Unique identifier for the repository
-- `files` (object): Mapping of file paths to their content
-- `projectName` (string, optional): Project name  
-- `description` (string, optional): Project description
-
-**Example:**
+**Complete Response:**
 ```json
 {
-  "repoId": "my-fullstack-app", 
-  "projectName": "My Fullstack Application",
-  "description": "React frontend with Express.js backend",
-  "files": {
-    "package.json": "{ \"name\": \"my-app\", \"dependencies\": {...} }",
-    "server.js": "const express = require('express'); app.get('/api/users'...)",
-    "client/src/App.js": "import React from 'react'; function App() {...}"
-  }
+  "success": true,
+  "repoId": "my-awesome-project",
+  "analysis": {
+    "file_count": 45,
+    "languages": ["JavaScript", "TypeScript"],
+    "config_files": ["package.json", "Dockerfile"],
+    "size_bytes": 1024000,
+    "frameworks": ["React", "Express.js", "MongoDB"]
+  },
+  "generatedTools": [
+    {
+      "name": "test-api-endpoint",
+      "title": "Test API Endpoint",
+      "description": "Test REST API endpoints with proper payloads",
+      "input_schema": {
+        "endpoint": "string",
+        "method": "string",
+        "payload": "object"
+      },
+      "category": "api",
+      "usage": "await mcp.callTool('test-api-endpoint', {endpoint: '/api/users', method: 'GET'})"
+    },
+    {
+      "name": "build-react-app",
+      "title": "Build React Application",
+      "description": "Build React app with environment selection",
+      "input_schema": {
+        "environment": "string"
+      },
+      "category": "development",
+      "usage": "await mcp.callTool('build-react-app', {environment: 'production'})"
+    },
+    {
+      "name": "query-mongodb",
+      "title": "Query MongoDB Database",
+      "description": "Execute MongoDB queries on detected models",
+      "input_schema": {
+        "collection": "string",
+        "query": "object"
+      },
+      "category": "database",
+      "usage": "await mcp.callTool('query-mongodb', {collection: 'users', query: {status: 'active'}})"
+    },
+    {
+      "name": "run-test-suite",
+      "title": "Run Test Suite",
+      "description": "Execute Jest/Mocha tests with coverage",
+      "input_schema": {
+        "testPattern": "string"
+      },
+      "category": "development",
+      "usage": "await mcp.callTool('run-test-suite', {testPattern: 'api/**/*.test.js'})"
+    },
+    {
+      "name": "deploy-to-staging",
+      "title": "Deploy to Staging",
+      "description": "Deploy to staging environment",
+      "input_schema": {
+        "environment": "string"
+      },
+      "category": "deployment",
+      "usage": "await mcp.callTool('deploy-to-staging', {environment: 'staging'})"
+    },
+    {
+      "name": "analyze-bundle-size",
+      "title": "Analyze Bundle Size",
+      "description": "Analyze webpack bundle with recommendations",
+      "input_schema": {},
+      "category": "analysis",
+      "usage": "await mcp.callTool('analyze-bundle-size', {})"
+    }
+  ],
+  "documentation": {
+    "overview": "React + Express.js fullstack application with MongoDB integration...",
+    "architecture": "Frontend: React SPA, Backend: Express.js REST API, Database: MongoDB...",
+    "apiEndpoints": [
+      {
+        "path": "/api/users",
+        "method": "GET",
+        "description": "Retrieve user list with pagination",
+        "parameters": ["page", "limit"],
+        "response": "Array of user objects"
+      },
+      {
+        "path": "/api/auth/login",
+        "method": "POST",
+        "description": "Authenticate user with email/password",
+        "parameters": ["email", "password"],
+        "response": "JWT token and user data"
+      }
+    ],
+    "keyFunctions": [
+      {
+        "name": "authenticateUser",
+        "file": "src/auth/middleware.js:15",
+        "description": "JWT token validation middleware"
+      },
+      {
+        "name": "processPayment",
+        "file": "src/payment/stripe.js:42",
+        "description": "Stripe payment processing logic"
+      }
+    ],
+    "developmentGuide": "To run locally: npm install && npm run dev...",
+    "deploymentGuide": "Deploy with Docker: docker build -t app . && docker run -p 3000:3000 app..."
+  },
+  "serverGenerated": true,
+  "toolsCount": 6,
+  "message": "Generated complete MCP server with 6 tools and comprehensive documentation. Ready for deployment."
 }
 ```
 
-#### 2. list-repositories
+### 🚀 **Tool 2: `deploy-mcp-server`**
+
+The user then calls this tool to deploy the generated MCP server:
+
+```javascript
+await mcp.callTool('deploy-mcp-server', {
+  repoId: 'my-awesome-project',
+  subdomain: 'my-project-mcp',  // Optional: auto-generated if not provided
+  port: 3001                    // Optional: auto-assigned if not provided
+});
+```
+
+**What happens:**
+1. Takes the generated MCP server files from Tool 1
+2. Creates deployment directory with all necessary files
+3. Builds Docker container with the MCP server
+4. Deploys container with auto-assigned port
+5. Returns connection instructions
+
+**Deployment Response:**
+```json
+{
+  "success": true,
+  "repoId": "my-awesome-project",
+  "deployment": {
+    "id": "mcp-my-awesome-project-1703123456789",
+    "subdomain": "my-project-mcp",
+    "port": 3001,
+    "url": "http://my-project-mcp.localhost:3001",
+    "containerId": "mcp-container-my-awesome-project-1703123456789",
+    "deployedAt": "2023-12-21T10:30:56.789Z",
+    "status": "running"
+  },
+  "connectionInstructions": {
+    "httpConnection": {
+      "url": "http://my-project-mcp.localhost:3001",
+      "description": "Connect via HTTP for web integrations"
+    },
+    "stdioConnection": {
+      "command": "deno run --allow-net http://my-project-mcp.localhost:3001/stdio",
+      "description": "Connect via stdio for editors like Cursor"
+    },
+    "dockerConnection": {
+      "command": "docker run -p 3001:3001 mcp-my-awesome-project",
+      "description": "Run locally with Docker"
+    }
+  },
+  "availableTools": [
+    "test-api-endpoint",
+    "build-react-app",
+    "query-mongodb",
+    "run-test-suite",
+    "deploy-to-staging",
+    "analyze-bundle-size"
+  ],
+  "usageExample": {
+    "connect": "const mcp = new McpClient('http://my-project-mcp.localhost:3001')",
+    "callTool": "await mcp.callTool('test-api-endpoint', {endpoint: '/api/users', method: 'GET'})"
+  },
+  "message": "MCP server deployed successfully! Connect using the instructions above."
+}
+```
+
+### 📋 **Complete Workflow**
+
+1. **Generate**: `generate-mcp-server` → Analyzes repo, creates tools & documentation
+2. **Deploy**: `deploy-mcp-server` → Deploys as standalone MCP server
+3. **Connect**: User connects to their custom MCP server and uses generated tools
+
+## Legacy Tools (Still Available)
+
+### Repository Management
+
+#### get-repo-tree
+Get the file tree structure using the `tree` command.
+
+#### store-repository
+Stores externally provided repository structure (for Cursor IDE integration).
+
+#### list-repositories
 Lists all stored repositories with enhanced analysis metadata.
 
-**Response includes:**
-- Basic repo info (name, description, file count)
-- Analysis results (project type, languages, frameworks)
-- Generated tools count and Dockerfile status
-- Confidence scores and key file analysis
-
-#### 3. get-repository-analysis
+#### get-repository-analysis
 Get detailed analysis results for a specific repository.
 
-**Parameters:**
-- `repoId` (string): Repository ID
-
-**Returns:**
-- Full project analysis (type, languages, frameworks)
-- Key files selected for analysis with importance scores
-- Generated MCP tools with implementation hints
-- API endpoints detected
-- Dockerfile generation status
-
-#### 4. get-generated-tools
+#### get-generated-tools
 Get the AI-generated MCP tools for a specific repository.
-
-**Parameters:**
-- `repoId` (string): Repository ID
-
-**Returns contextual tools like:**
-- `test-api-endpoint` - Test REST API endpoints
-- `build-frontend` - Build React/Vue/Angular projects  
-- `run-database-migration` - Execute database migrations
-- `analyze-bundle-size` - Analyze webpack bundle
-- `deploy-to-staging` - Deploy to staging environment
 
 ### Terminal & System Operations
 
@@ -418,7 +565,7 @@ The Python LLM agent generates 4-6 highly contextual MCP tools based on intellig
 
 ### Python Environment:
 - **uv**: Fast Python package manager and runner (`uv pip install openai`)
-- **uv run**: Executes intelligent_agent.py with proper environment
+- **uv run**: Executes agent.py.py with proper environment
 - **.venv**: Auto-managed virtual environment with OpenAI SDK
 
 ## File Structure Analysis

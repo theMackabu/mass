@@ -276,41 +276,13 @@ const repositories = new Map();
 // Container orchestrator instance
 const orchestrator = new ContainerOrchestrator();
 
-// Get repository tree structure
-mcp.registerTool(
-  'get-repo-tree',
-  {
-    title: 'Get Repository Tree Structure', 
-    description: 'Get the file tree structure of the current repository using tree command',
-    inputSchema: {},
-  },
-  async () => {
-    try {
-      const treeOutput = await getRepositoryTree(WORKSPACE_ROOT);
-      
-      return {
-        content: [{
-          type: 'text',
-          text: treeOutput
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Error getting repository tree: ${error.message}`
-        }]
-      };
-    }
-  }
-);
 
-// Create and analyze repository archive
+// 🚀 Tool 1: Generate complete MCP server with analysis, tools, and documentation
 mcp.registerTool(
-  'analyze-repository',
+  'generate-mcp-server',
   {
-    title: 'Analyze Repository',
-    description: 'Create tar.gz archive and analyze repository using Rust operations',
+    title: 'Generate Complete MCP Server',
+    description: 'Analyze repository and generate complete MCP server with tools and documentation',
     inputSchema: {
       repoId: z.string().describe('Unique identifier for the repository'),
       projectName: z.string().optional().describe('Optional project name'),
@@ -322,16 +294,69 @@ mcp.registerTool(
     try {
       // Get repository structure using tree command
       const treeOutput = await getRepositoryTree(WORKSPACE_ROOT);
-      
+
       // Create tar.gz archive of repository
       const archivePath = await createRepositoryArchive(repoId, WORKSPACE_ROOT);
-      
+
       // Extract and analyze using Rust operations
       const tempDir = `/tmp/mass-analysis-${repoId}-${Date.now()}`;
-      const extractResult = await MASS.ops.op_extract_tar_gz(archivePath, tempDir);
+      await MASS.ops.op_extract_tar_gz(archivePath, tempDir);
       const analysis = await MASS.ops.op_analyze_repository(tempDir);
-      const importantFiles = await MASS.ops.op_get_important_files(tempDir, maxFiles);
-      
+
+      // Use LLM-based intelligent file selection by calling the Python agent
+      let selectedFiles = [];
+      let importantFiles = "";
+
+      try {
+        // First get file selection from LLM
+        const fileSelectionInput = {
+          repo_id: repoId,
+          project_name: projectName,
+          description: description,
+          tree_structure: treeOutput,
+          analysis: analysis,
+          openai_api_key: Deno.env.get('OPENAI_API_KEY') || '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',
+          openai_base_url: Deno.env.get('OPENAI_BASE_URL') || 'https://api.groq.com/openai/v1',
+          openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b'
+        };
+
+        // Call Python agent to get selected file paths
+        const fileSelectionCommand = new Deno.Command("uv", {
+          args: ["run", "agent.py", "select-files"],
+          stdin: "piped",
+          stdout: "piped",
+          stderr: "piped",
+          cwd: "/Users/phytal/Projects/mass/llm"
+        });
+
+        const fileSelectionChild = fileSelectionCommand.spawn();
+        const fileSelectionWriter = fileSelectionChild.stdin.getWriter();
+        await fileSelectionWriter.write(new TextEncoder().encode(JSON.stringify(fileSelectionInput)));
+        await fileSelectionWriter.close();
+
+        const fileSelectionOutput = await fileSelectionChild.output();
+
+        if (fileSelectionOutput.code === 0) {
+          const fileSelectionResult = JSON.parse(new TextDecoder().decode(fileSelectionOutput.stdout));
+          selectedFiles = fileSelectionResult.selected_files || [];
+          console.log(`LLM selected ${selectedFiles.length} files for analysis`);
+        } else {
+          console.warn("LLM file selection failed, falling back to pattern-based selection");
+          // Fallback to pattern-based selection
+          importantFiles = await MASS.ops.op_get_important_files_by_pattern(tempDir, maxFiles);
+        }
+
+        // If LLM selection succeeded, get the actual file contents using the new Rust function
+        if (selectedFiles.length > 0) {
+          importantFiles = await MASS.ops.op_get_important_files(tempDir, selectedFiles);
+        }
+
+      } catch (error) {
+        console.warn("LLM file selection failed:", error);
+        // Fallback to pattern-based selection
+        importantFiles = await MASS.ops.op_get_important_files_by_pattern(tempDir, maxFiles);
+      }
+
       // Store repository data
       repositories.set(repoId, {
         id: repoId,
@@ -347,24 +372,42 @@ mcp.registerTool(
 
       // Trigger intelligent MCP analysis and generation using OpenAI
       const intelligentAnalysis = await callIntelligentAgent(repoId);
-      
+
+      // Store generated content in repository
+      const repo = repositories.get(repoId);
+      repo.generatedTools = intelligentAnalysis.mcp_tools || [];
+      repo.documentation = intelligentAnalysis.documentation || {};
+      repo.serverTemplate = intelligentAnalysis.server_template || {};
+      repositories.set(repoId, repo);
+
       // Clean up temp directory
       await MASS.ops.op_cleanup_temp_directory(tempDir);
-      
+
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
             success: true,
             repoId,
-            workspacePath: WORKSPACE_ROOT,
-            archivePath,
-            analysis,
-            importantFilesCount: repositories.get(repoId).importantFiles.length,
-            generatedTools: intelligentAnalysis.mcp_tools?.length || 0,
-            apiEndpoints: intelligentAnalysis.codebase_analysis?.api_endpoints?.length || 0,
-            serverTemplate: !!intelligentAnalysis.server_template,
-            message: `Repository analyzed successfully. Generated ${intelligentAnalysis.mcp_tools?.length || 0} MCP tools and deployable server.`
+            analysis: {
+              file_count: analysis.file_count,
+              languages: analysis.languages,
+              config_files: analysis.config_files,
+              size_bytes: analysis.size_bytes,
+              frameworks: analysis.frameworks || []
+            },
+            generatedTools: intelligentAnalysis.mcp_tools?.map(tool => ({
+              name: tool.name,
+              title: tool.title,
+              description: tool.description,
+              input_schema: tool.input_schema,
+              category: tool.category,
+              usage: `await mcp.callTool('${tool.name}', ${JSON.stringify(tool.example_input || {})})`
+            })) || [],
+            documentation: intelligentAnalysis.documentation || {},
+            serverGenerated: !!intelligentAnalysis.server_template,
+            toolsCount: intelligentAnalysis.mcp_tools?.length || 0,
+            message: `Generated complete MCP server with ${intelligentAnalysis.mcp_tools?.length || 0} tools and comprehensive documentation. Ready for deployment.`
           }, null, 2)
         }]
       };
@@ -383,44 +426,78 @@ mcp.registerTool(
   }
 );
 
-// Store and process user repository (keep for external clients)
+// 🚀 Tool 3: Store and deploy repository as regular container (independent workflow)
 mcp.registerTool(
-  'store-repository',
+  'deploy-repository',
   {
-    title: 'Store User Repository',
-    description: 'Store entire user repository structure and files for MCP tool generation',
+    title: 'Store and Deploy Repository Container',
+    description: 'Store external repository structure and deploy as regular application container (not MCP server)',
     inputSchema: {
       repoId: z.string().describe('Unique identifier for the repository'),
       files: z.record(z.string()).describe('Object mapping file paths to their content'),
       projectName: z.string().optional().describe('Optional project name'),
       description: z.string().optional().describe('Optional project description'),
+      port: z.number().optional().describe('Port to expose (optional)'),
     },
   },
-  async ({ repoId, files, projectName, description }) => {
+  async ({ repoId, files, projectName, description, port }) => {
     try {
-      // Store repository data
-      repositories.set(repoId, {
-        id: repoId,
-        projectName,
-        description,
-        files,
-        storedAt: new Date().toISOString(),
-        fileStructure: analyzeFileStructure(files),
-        apiEndpoints: extractApiEndpoints(files),
-      });
+      // Check if repository already exists
+      let repo = repositories.get(repoId);
 
-      // Trigger MCP tool generation using Python agent
-      const generatedTools = await callPythonAgent(repoId);
-      
+      if (!repo) {
+        // Store repository data with file structure analysis
+        const fileStructure = analyzeFileStructure(files);
+        const apiEndpoints = extractApiEndpoints(files);
+
+        repo = {
+          id: repoId,
+          projectName,
+          description,
+          files,
+          storedAt: new Date().toISOString(),
+          fileStructure,
+          apiEndpoints,
+          workspacePath: null, // External files, not workspace-based
+        };
+
+        repositories.set(repoId, repo);
+
+        // Generate Dockerfile using Python agent analysis
+        try {
+          const dockerfile = await generateDockerfileForFiles(repo);
+          repo.dockerfile = dockerfile;
+          repositories.set(repoId, repo);
+        } catch (error) {
+          console.warn(`Dockerfile generation failed for ${repoId}:`, error.message);
+          // Continue with deployment attempt even if Dockerfile generation fails
+        }
+      }
+
+      // Ensure we have a Dockerfile for deployment
+      if (!repo.dockerfile) {
+        throw new Error(`No Dockerfile available for repository ${repoId}. Unable to deploy without build instructions.`);
+      }
+
+      // Build and deploy using the container orchestrator
+      const buildResult = await orchestrator.buildImage(repoId, repo.dockerfile, repo.files);
+      const deployResult = await orchestrator.deployContainer(repoId, buildResult.imageName, { port });
+
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
             success: true,
             repoId,
-            filesStored: Object.keys(files).length,
-            generatedTools: generatedTools.length,
-            message: `Repository stored successfully. Generated ${generatedTools.length} MCP tools.`
+            filesStored: Object.keys(repo.files).length,
+            containerId: deployResult.containerId,
+            url: deployResult.url,
+            port: deployResult.port,
+            status: deployResult.status,
+            apiEndpoints: repo.apiEndpoints?.length || 0,
+            languages: repo.fileStructure?.languages || [],
+            frameworks: repo.fileStructure?.frameworks || [],
+            message: 'Repository stored and deployed successfully as application container'
           }, null, 2)
         }]
       };
@@ -439,41 +516,7 @@ mcp.registerTool(
   }
 );
 
-// Generate Dockerfile for repository
-mcp.registerTool(
-  'generate-dockerfile',
-  {
-    title: 'Generate Dockerfile',
-    description: 'Generate a Dockerfile for the stored repository using AI',
-    inputSchema: {
-      repoId: z.string().describe('Repository ID to generate Dockerfile for'),
-    },
-  },
-  async ({ repoId }) => {
-    try {
-      const repo = repositories.get(repoId);
-      if (!repo) {
-        throw new Error(`Repository ${repoId} not found`);
-      }
-
-      const dockerfile = await generateDockerfile(repo);
-      
-      return {
-        content: [{
-          type: 'text',
-          text: dockerfile
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Error generating Dockerfile: ${error.message}`
-        }]
-      };
-    }
-  }
-);
+// 📋 Helper Tools for repository management
 
 // List stored repositories with enhanced metadata
 mcp.registerTool(
@@ -488,65 +531,22 @@ mcp.registerTool(
       id: repo.id,
       projectName: repo.projectName,
       description: repo.description,
-      filesCount: Object.keys(repo.files).length,
       storedAt: repo.storedAt,
-      apiEndpoints: repo.apiEndpoints?.length || 0,
       analysis: repo.analysis ? {
         projectType: repo.analysis.project_type,
         languages: repo.analysis.languages,
-        frameworks: repo.analysis.frameworks,
-        keyFilesCount: repo.analysis.key_files_count,
-        confidenceScore: repo.analysis.confidence_score
+        frameworks: repo.analysis.frameworks || [],
+        fileCount: repo.analysis.file_count
       } : null,
       generatedToolsCount: repo.generatedTools?.length || 0,
-      hasDockerfile: !!repo.dockerfile
+      hasDockerfile: !!repo.dockerfile,
+      hasDeployment: !!repo.deployment
     }));
 
     return {
       content: [{
         type: 'text',
         text: JSON.stringify(repos, null, 2)
-      }]
-    };
-  }
-);
-
-// Get detailed analysis for a repository
-mcp.registerTool(
-  'get-repository-analysis',
-  {
-    title: 'Get Repository Analysis',
-    description: 'Get detailed analysis results for a stored repository',
-    inputSchema: {
-      repoId: z.string().describe('Repository ID to get analysis for'),
-    },
-  },
-  async ({ repoId }) => {
-    const repo = repositories.get(repoId);
-    if (!repo) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: `Repository ${repoId} not found`
-          }, null, 2)
-        }]
-      };
-    }
-
-    return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          success: true,
-          repoId,
-          analysis: repo.analysis,
-          keyFiles: repo.keyFiles,
-          generatedTools: repo.generatedTools,
-          apiEndpoints: repo.apiEndpoints,
-          hasDockerfile: !!repo.dockerfile
-        }, null, 2)
       }]
     };
   }
@@ -582,7 +582,13 @@ mcp.registerTool(
         text: JSON.stringify({
           success: true,
           repoId,
-          tools: repo.generatedTools || [],
+          tools: repo.generatedTools?.map(tool => ({
+            name: tool.name,
+            title: tool.title,
+            description: tool.description,
+            category: tool.category,
+            input_schema: tool.input_schema
+          })) || [],
           toolsCount: repo.generatedTools?.length || 0
         }, null, 2)
       }]
@@ -590,114 +596,6 @@ mcp.registerTool(
   }
 );
 
-// Helper function to analyze file structure
-function analyzeFileStructure(files) {
-  const structure = {
-    languages: new Set(),
-    frameworks: new Set(),
-    hasDockerfile: false,
-    hasPackageJson: false,
-    hasCargoToml: false,
-    hasPyprojectToml: false,
-    directories: new Set(),
-  };
-
-  for (const filePath in files) {
-    const ext = filePath.split('.').pop()?.toLowerCase();
-    const fileName = filePath.split('/').pop();
-    const dir = filePath.split('/').slice(0, -1).join('/');
-    
-    if (dir) structure.directories.add(dir);
-    
-    // Detect languages
-    switch (ext) {
-      case 'js':
-      case 'ts':
-      case 'jsx':
-      case 'tsx':
-        structure.languages.add('JavaScript/TypeScript');
-        break;
-      case 'py':
-        structure.languages.add('Python');
-        break;
-      case 'rs':
-        structure.languages.add('Rust');
-        break;
-      case 'go':
-        structure.languages.add('Go');
-        break;
-      case 'java':
-        structure.languages.add('Java');
-        break;
-    }
-    
-    // Detect frameworks and build files
-    if (fileName === 'package.json') structure.hasPackageJson = true;
-    if (fileName === 'Cargo.toml') structure.hasCargoToml = true;
-    if (fileName === 'pyproject.toml') structure.hasPyprojectToml = true;
-    if (fileName === 'Dockerfile') structure.hasDockerfile = true;
-    
-    // Framework detection based on content
-    const content = files[filePath].toLowerCase();
-    if (content.includes('react')) structure.frameworks.add('React');
-    if (content.includes('next')) structure.frameworks.add('Next.js');
-    if (content.includes('express')) structure.frameworks.add('Express');
-    if (content.includes('fastapi')) structure.frameworks.add('FastAPI');
-    if (content.includes('django')) structure.frameworks.add('Django');
-    if (content.includes('tokio')) structure.frameworks.add('Tokio');
-  }
-  
-  return {
-    ...structure,
-    languages: Array.from(structure.languages),
-    frameworks: Array.from(structure.frameworks),
-    directories: Array.from(structure.directories),
-  };
-}
-
-// Helper function to extract API endpoints
-function extractApiEndpoints(files) {
-  const endpoints = [];
-  
-  for (const filePath in files) {
-    const content = files[filePath];
-    
-    // Express.js style endpoints
-    const expressMatches = content.matchAll(/(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g);
-    for (const match of expressMatches) {
-      endpoints.push({
-        method: match[1].toUpperCase(),
-        path: match[2],
-        file: filePath,
-        framework: 'Express'
-      });
-    }
-    
-    // FastAPI style endpoints
-    const fastapiMatches = content.matchAll(/@app\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g);
-    for (const match of fastapiMatches) {
-      endpoints.push({
-        method: match[1].toUpperCase(),
-        path: match[2],
-        file: filePath,
-        framework: 'FastAPI'
-      });
-    }
-    
-    // Next.js API routes (file-based routing)
-    if (filePath.includes('/api/') && (filePath.endsWith('.js') || filePath.endsWith('.ts'))) {
-      const route = filePath.replace(/.*\/api/, '').replace(/\.(js|ts)$/, '').replace(/\/index$/, '');
-      endpoints.push({
-        method: 'MULTIPLE',
-        path: `/api${route || '/'}`,
-        file: filePath,
-        framework: 'Next.js'
-      });
-    }
-  }
-  
-  return endpoints;
-}
 
 // Call Intelligent OpenAI Agent for comprehensive analysis and MCP generation  
 async function callIntelligentAgent(repoId) {
@@ -713,15 +611,15 @@ async function callIntelligentAgent(repoId) {
     analysis: repo.analysis,
     important_files: repo.importantFiles.slice(0, 15), // More files for better context
     workspace_path: repo.workspacePath,
-    // OpenAI configuration (optional)
-    openai_api_key: Deno.env.get('OPENAI_API_KEY'),
-    openai_base_url: Deno.env.get('OPENAI_BASE_URL'), // For custom endpoints
-    openai_model: Deno.env.get('OPENAI_MODEL') || 'gpt-4o-mini'
+    // OpenAI configuration - using Groq for fast inference
+    openai_api_key: Deno.env.get('OPENAI_API_KEY') || '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',
+    openai_base_url: Deno.env.get('OPENAI_BASE_URL') || 'https://api.groq.com/openai/v1',
+    openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b' // Groq's fastest model
   };
 
   // Call Python LLM agent using uv run
   const command = new Deno.Command("uv", {
-    args: ["run", "intelligent_agent.py", "analyze-and-generate"],
+    args: ["run", "agent.py", "analyze-and-generate"],
     stdin: "piped",
     stdout: "piped", 
     stderr: "piped",
@@ -760,76 +658,166 @@ async function callIntelligentAgent(repoId) {
   return result.mcp_tools;
 }
 
-// Generate Dockerfile - handled by Python agent
-async function generateDockerfile(repo) {
-  // If dockerfile already generated by Python agent, return it
-  if (repo.dockerfile) {
-    return repo.dockerfile;
+// Helper function to analyze file structure (for external files)
+function analyzeFileStructure(files) {
+  const structure = {
+    languages: new Set(),
+    frameworks: new Set(),
+    hasDockerfile: false,
+    hasPackageJson: false,
+    hasCargoToml: false,
+    hasPyprojectToml: false,
+    directories: new Set(),
+  };
+
+  for (const filePath in files) {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    const fileName = filePath.split('/').pop();
+    const dir = filePath.split('/').slice(0, -1).join('/');
+
+    if (dir) structure.directories.add(dir);
+
+    // Detect languages
+    switch (ext) {
+      case 'js':
+      case 'ts':
+      case 'jsx':
+      case 'tsx':
+        structure.languages.add('JavaScript/TypeScript');
+        break;
+      case 'py':
+        structure.languages.add('Python');
+        break;
+      case 'rs':
+        structure.languages.add('Rust');
+        break;
+      case 'go':
+        structure.languages.add('Go');
+        break;
+      case 'java':
+        structure.languages.add('Java');
+        break;
+    }
+
+    // Detect frameworks and build files
+    if (fileName === 'package.json') structure.hasPackageJson = true;
+    if (fileName === 'Cargo.toml') structure.hasCargoToml = true;
+    if (fileName === 'pyproject.toml') structure.hasPyprojectToml = true;
+    if (fileName === 'Dockerfile') structure.hasDockerfile = true;
+
+    // Framework detection based on content
+    const content = files[filePath].toLowerCase();
+    if (content.includes('react')) structure.frameworks.add('React');
+    if (content.includes('next')) structure.frameworks.add('Next.js');
+    if (content.includes('express')) structure.frameworks.add('Express');
+    if (content.includes('fastapi')) structure.frameworks.add('FastAPI');
+    if (content.includes('django')) structure.frameworks.add('Django');
+    if (content.includes('tokio')) structure.frameworks.add('Tokio');
   }
-  
-  // Otherwise trigger Python agent analysis
-  await callPythonAgent(repo.id);
-  return repo.dockerfile || "# Dockerfile generation failed - please run analyze-repository first";
+
+  return {
+    ...structure,
+    languages: Array.from(structure.languages),
+    frameworks: Array.from(structure.frameworks),
+    directories: Array.from(structure.directories),
+  };
 }
 
-// Deploy repository as container
-mcp.registerTool(
-  'deploy-repository',
-  {
-    title: 'Deploy Repository',
-    description: 'Build and deploy the stored repository as a container',
-    inputSchema: {
-      repoId: z.string().describe('Repository ID to deploy'),
-      port: z.number().optional().describe('Port to expose (optional)'),
-    },
-  },
-  async ({ repoId, port }) => {
-    try {
-      const repo = repositories.get(repoId);
-      if (!repo) {
-        throw new Error(`Repository ${repoId} not found`);
-      }
+// Helper function to extract API endpoints (for external files)
+function extractApiEndpoints(files) {
+  const endpoints = [];
 
-      // Generate Dockerfile if not already generated
-      let dockerfile = repo.dockerfile;
-      if (!dockerfile) {
-        dockerfile = await generateDockerfile(repo);
-        repo.dockerfile = dockerfile;
-        repositories.set(repoId, repo);
-      }
+  for (const filePath in files) {
+    const content = files[filePath];
 
-      // Build and deploy
-      const buildResult = await orchestrator.buildImage(repoId, dockerfile, repo.files);
-      const deployResult = await orchestrator.deployContainer(repoId, buildResult.imageName, { port });
+    // Express.js style endpoints
+    const expressMatches = content.matchAll(/(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g);
+    for (const match of expressMatches) {
+      endpoints.push({
+        method: match[1].toUpperCase(),
+        path: match[2],
+        file: filePath,
+        framework: 'Express'
+      });
+    }
 
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            repoId,
-            containerId: deployResult.containerId,
-            url: deployResult.url,
-            port: deployResult.port,
-            status: deployResult.status,
-            message: 'Repository deployed successfully'
-          }, null, 2)
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: error.message,
-            repoId
-          }, null, 2)
-        }]
-      };
+    // FastAPI style endpoints
+    const fastapiMatches = content.matchAll(/@app\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g);
+    for (const match of fastapiMatches) {
+      endpoints.push({
+        method: match[1].toUpperCase(),
+        path: match[2],
+        file: filePath,
+        framework: 'FastAPI'
+      });
+    }
+
+    // Next.js API routes (file-based routing)
+    if (filePath.includes('/api/') && (filePath.endsWith('.js') || filePath.endsWith('.ts'))) {
+      const route = filePath.replace(/.*\/api/, '').replace(/\.(js|ts)$/, '').replace(/\/index$/, '');
+      endpoints.push({
+        method: 'MULTIPLE',
+        path: `/api${route || '/'}`,
+        file: filePath,
+        framework: 'Next.js'
+      });
     }
   }
-);
+
+  return endpoints;
+}
+
+// Generate Dockerfile for external files using Python agent
+async function generateDockerfileForFiles(repo) {
+  // Prepare input for Python agent (similar to callIntelligentAgent but focused on Dockerfile)
+  const agentInput = {
+    repo_id: repo.id,
+    project_name: repo.projectName,
+    description: repo.description,
+    files: repo.files,
+    file_structure: repo.fileStructure,
+    api_endpoints: repo.apiEndpoints,
+    // OpenAI configuration
+    openai_api_key: Deno.env.get('OPENAI_API_KEY'),
+    openai_base_url: Deno.env.get('OPENAI_BASE_URL') || 'https://api.groq.com/openai/v1',
+    openai_model: Deno.env.get('OPENAI_MODEL') || 'openai/gpt-oss-120b'
+  };
+
+  // Call Python agent for Dockerfile generation
+  const command = new Deno.Command("uv", {
+    args: ["run", "agent.py", "generate-dockerfile"],
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+    cwd: "/Users/phytal/Projects/mass/llm"
+  });
+
+  const child = command.spawn();
+
+  // Send input to Python process
+  const writer = child.stdin.getWriter();
+  const encoder = new TextEncoder();
+  await writer.write(encoder.encode(JSON.stringify(agentInput)));
+  await writer.close();
+
+  // Get output from Python process
+  const { code, stdout, stderr } = await child.output();
+
+  if (code !== 0) {
+    const errorText = new TextDecoder().decode(stderr);
+    throw new Error(`Python agent failed: ${errorText}`);
+  }
+
+  const outputText = new TextDecoder().decode(stdout);
+  const result = JSON.parse(outputText);
+
+  if (!result.success) {
+    throw new Error(`Python agent error: ${result.error}`);
+  }
+
+  return result.dockerfile || "# Dockerfile generation failed";
+}
+
 
 // List deployed containers
 mcp.registerTool(
@@ -919,175 +907,8 @@ mcp.registerTool(
   }
 );
 
-// Read specific files from the repository
-mcp.registerTool(
-  'read-file',
-  {
-    title: 'Read Repository File',
-    description: 'Read a specific file from the current repository',
-    inputSchema: {
-      filePath: z.string().describe('Path to file relative to repository root'),
-    },
-  },
-  async ({ filePath }) => {
-    try {
-      const fullPath = resolveWithinRoot(WORKSPACE_ROOT, filePath);
-      
-      let stat;
-      try {
-        stat = await Deno.stat(fullPath);
-      } catch (error) {
-        throw new Error(`File not found: ${filePath}`);
-      }
-      
-      if (!stat.isFile) {
-        throw new Error(`Path is not a file: ${filePath}`);
-      }
-      
-      const data = await Deno.readFile(fullPath);
-      
-      if (isTextFile(fullPath)) {
-        const content = new TextDecoder().decode(data);
-        return {
-          content: [{
-            type: 'text',
-            text: content
-          }]
-        };
-      } else {
-        return {
-          content: [{
-            type: 'text',
-            text: `Binary file: ${filePath} (${data.length} bytes)`
-          }]
-        };
-      }
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Error reading file: ${error.message}`
-        }]
-      };
-    }
-  }
-);
 
-// List directory contents
-mcp.registerTool(
-  'list-directory',
-  {
-    title: 'List Directory Contents',
-    description: 'List contents of a directory in the repository',
-    inputSchema: {
-      dirPath: z.string().optional().describe('Directory path relative to repository root (empty for root)'),
-    },
-  },
-  async ({ dirPath = '' }) => {
-    try {
-      const fullPath = resolveWithinRoot(WORKSPACE_ROOT, dirPath);
-      
-      let stat;
-      try {
-        stat = await Deno.stat(fullPath);
-      } catch (error) {
-        throw new Error(`Directory not found: ${dirPath || 'root'}`);
-      }
-      
-      if (!stat.isDirectory) {
-        throw new Error(`Path is not a directory: ${dirPath || 'root'}`);
-      }
-      
-      const entries = [];
-      for await (const entry of Deno.readDir(fullPath)) {
-        if (entry.name.startsWith('.') || 
-            entry.name === 'node_modules' || 
-            entry.name === 'target' ||
-            entry.name === '__pycache__') {
-          continue;
-        }
-        
-        const entryPath = dirPath ? `${dirPath}/${entry.name}` : entry.name;
-        const entryFullPath = `${fullPath}/${entry.name}`;
-        
-        let entryStat;
-        try {
-          entryStat = await Deno.stat(entryFullPath);
-        } catch {
-          continue;
-        }
-        
-        entries.push({
-          name: entry.name,
-          path: entryPath,
-          type: entry.isDirectory ? 'directory' : 'file',
-          size: entryStat.size,
-          modified: entryStat.mtime?.toISOString()
-        });
-      }
-      
-      entries.sort((a, b) => {
-        if (a.type !== b.type) {
-          return a.type === 'directory' ? -1 : 1;
-        }
-        return a.name.localeCompare(b.name);
-      });
-      
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify(entries, null, 2)
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Error listing directory: ${error.message}`
-        }]
-      };
-    }
-  }
-);
-
-// Execute terminal commands in the repository
-mcp.registerTool(
-  'run-command',
-  {
-    title: 'Run Terminal Command',
-    description: 'Execute a terminal command in the repository workspace',
-    inputSchema: {
-      command: z.string().describe('Command to execute'),
-      args: z.array(z.string()).optional().describe('Command arguments'),
-    },
-  },
-  async ({ command, args = [] }) => {
-    try {
-      const result = await runCommand(command, args);
-      
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            command: `${command} ${args.join(' ')}`,
-            exitCode: result.code,
-            output: result.output,
-            error: result.error
-          }, null, 2)
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Error executing command: ${error.message}`
-        }]
-      };
-    }
-  }
-);
-
-// Deploy generated MCP server to a separate port/subdomain
+// 🚀 Tool 2: Deploy the generated MCP server as a standalone service
 mcp.registerTool(
   'deploy-mcp-server',
   {
@@ -1106,8 +927,8 @@ mcp.registerTool(
         throw new Error(`Repository ${repoId} not found`);
       }
 
-      if (!repo.serverTemplate) {
-        throw new Error(`No MCP server template generated for repository ${repoId}. Run analyze-repository first.`);
+      if (!repo.serverTemplate || Object.keys(repo.serverTemplate).length === 0) {
+        throw new Error(`No MCP server template generated for repository ${repoId}. Run generate-mcp-server first.`);
       }
 
       // Auto-generate subdomain and port if not provided
@@ -1119,7 +940,7 @@ mcp.registerTool(
       const deployDir = `/tmp/mcp-deployments/${deploymentId}`;
 
       // Create deployment files from generated template
-      const deployResult = await createMCPDeployment(repo, deployDir, deployPort);
+      await createMCPDeployment(repo, deployDir, deployPort);
 
       // Build and deploy container
       const containerResult = await deployMCPContainer(deploymentId, deployDir, deployPort);
@@ -1143,8 +964,28 @@ mcp.registerTool(
             success: true,
             repoId,
             deployment: repo.deployment,
-            mcpTools: repo.generatedTools?.length || 0,
-            message: `MCP server deployed successfully at ${repo.deployment.url}`
+            connectionInstructions: {
+              httpConnection: {
+                url: repo.deployment.url,
+                description: "Connect via HTTP for web integrations"
+              },
+              stdioConnection: {
+                command: `deno run --allow-net ${repo.deployment.url}/stdio`,
+                description: "Connect via stdio for editors like Cursor"
+              },
+              dockerConnection: {
+                command: `docker run -p ${deployPort}:${deployPort} mcp-server-${deploymentId}`,
+                description: "Run locally with Docker"
+              }
+            },
+            availableTools: repo.generatedTools?.map(tool => tool.name) || [],
+            usageExample: {
+              connect: `const mcp = new McpClient('${repo.deployment.url}')`,
+              callTool: repo.generatedTools?.[0]
+                ? `await mcp.callTool('${repo.generatedTools[0].name}', ${JSON.stringify(repo.generatedTools[0].example_input || {})})`
+                : "await mcp.callTool('generated-tool-name', {...})"
+            },
+            message: `MCP server deployed successfully! Connect using the instructions above.`
           }, null, 2)
         }]
       };

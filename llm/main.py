@@ -8,6 +8,11 @@ import json
 import sys
 import os
 from typing import Dict, Any, Optional, List
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv(dotenv_path=Path(__file__).parent / '.env')
 
 # Try to import dependencies - gracefully handle if not available
 try:

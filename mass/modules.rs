@@ -51,9 +51,9 @@ fn op_analyze_repository(#[string] repo_path: String) -> Result<HashMap<String, 
 
 #[op2]
 #[string]
-fn op_get_important_files(#[string] repo_path: String, #[bigint] max_files: u32) -> Result<String, deno_core::error::AnyError> {
+fn op_get_important_files_by_pattern(#[string] repo_path: String, #[bigint] max_files: u32) -> Result<String, deno_core::error::AnyError> {
     let mut important_files = Vec::new();
-    
+
     // Priority patterns for important files (ordered by importance)
     let important_patterns = vec![
         // Config files (highest priority)
@@ -66,12 +66,12 @@ fn op_get_important_files(#[string] repo_path: String, #[bigint] max_files: u32)
         // Entry points (glob patterns)
         "main.*", "index.*", "app.*", "server.*"
     ];
-    
+
     // Scan directory for matching files
     for entry in fs::read_dir(&repo_path)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
             for pattern in &important_patterns {
                 let matches = if pattern.contains("*") {
@@ -82,7 +82,7 @@ fn op_get_important_files(#[string] repo_path: String, #[bigint] max_files: u32)
                     // Exact match
                     file_name == *pattern
                 };
-                
+
                 if matches {
                     // Read file content if it's text and not too large
                     if let Ok(metadata) = entry.metadata() {
@@ -98,7 +98,7 @@ fn op_get_important_files(#[string] repo_path: String, #[bigint] max_files: u32)
                             important_files.push(format!("{}:{}", file_name, truncated_content));
                         }
                     }
-                    
+
                     if important_files.len() >= max_files as usize {
                         break;
                     }
@@ -109,7 +109,46 @@ fn op_get_important_files(#[string] repo_path: String, #[bigint] max_files: u32)
             }
         }
     }
-    
+
+    Ok(important_files.join("\n---FILE_SEPARATOR---\n"))
+}
+
+#[op2]
+#[string]
+fn op_get_important_files(#[string] repo_path: String, #[serde] file_paths: Vec<String>) -> Result<String, deno_core::error::AnyError> {
+    let mut important_files = Vec::new();
+    let repo_path = Path::new(&repo_path);
+
+    for file_path in file_paths {
+        let full_path = repo_path.join(&file_path);
+
+        if !full_path.exists() {
+            continue;
+        }
+
+        if full_path.is_file() {
+            if let Ok(metadata) = fs::metadata(&full_path) {
+                // Skip very large files (>500KB for LLM processing)
+                if metadata.len() > 500_000 {
+                    important_files.push(format!("{}:[File too large: {} bytes]", file_path, metadata.len()));
+                    continue;
+                }
+
+                // Try to read file content
+                match fs::read_to_string(&full_path) {
+                    Ok(content) => {
+                        // For very long content, we'll handle truncation later in the token counting logic
+                        important_files.push(format!("{}:{}", file_path, content));
+                    },
+                    Err(_) => {
+                        // If we can't read as text, it might be binary
+                        important_files.push(format!("{}:[Binary file - {} bytes]", file_path, metadata.len()));
+                    }
+                }
+            }
+        }
+    }
+
     Ok(important_files.join("\n---FILE_SEPARATOR---\n"))
 }
 
@@ -246,6 +285,7 @@ extension!(
         op_extract_tar_gz,
         op_analyze_repository,
         op_get_important_files,
+        op_get_important_files_by_pattern,
         op_cleanup_temp_directory
     ],
     esm_entry_point = "ext:stardust/mass/runtime/entry.js",
