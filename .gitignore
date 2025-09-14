@@ -41,3 +41,6 @@ database.sqlite
 
 mass/runtime/snapshot
 mass/server/node_modules
+
+# downloaded github repositories
+mass/repos/

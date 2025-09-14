@@ -148,7 +148,7 @@ echo '{"repo_id": "test", "tree_structure": "...", "analysis": {...}, "important
    ```
 
 2. **API key not set**
-   - Check your `.env` file has `OPENAI_API_KEY=your_key_here`
+   - Environment variables are now hardcoded in the Python files
    - Verify the key is valid for Groq API
 
 3. **Dependencies missing**

@@ -107,24 +107,11 @@ install_dependencies() {
 
 # Function to check environment variables
 check_env_vars() {
-    print_status "Checking environment variables..."
+    print_status "Checking environment configuration..."
     
-    if [[ -f ".env" ]]; then
-        print_success ".env file found"
-        source .env
-    elif [[ -f ".env.example" ]]; then
-        print_warning ".env file not found, but .env.example exists"
-        print_warning "Copy .env.example to .env and configure your API keys"
-    else
-        print_warning "No .env file found"
-    fi
-    
-    if [[ -n "$OPENAI_API_KEY" ]]; then
-        print_success "OPENAI_API_KEY is set"
-    else
-        print_warning "OPENAI_API_KEY is not set"
-        print_warning "Some tests may fail without a valid API key"
-    fi
+    print_success "Environment variables are hardcoded in Python files"
+    print_info "Using hardcoded API key and configuration"
+    print_info "No .env file required"
 }
 
 # Function to run the main test script

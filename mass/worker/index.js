@@ -312,7 +312,7 @@ async function downloadGitHubRepo(githubUrl, repoId) {
         'clone',
         '--depth', '1', // Shallow clone for faster download
         `https://github.com/${repoPath}.git`,
-        tempDir
+        repoDir
       ],
       stdout: 'piped',
       stderr: 'piped',
@@ -326,12 +326,12 @@ async function downloadGitHubRepo(githubUrl, repoId) {
       throw new Error(`Failed to clone repository: ${errorText}`);
     }
 
-    console.log(`Downloaded GitHub repository to: ${tempDir}`);
-    return tempDir;
+    console.log(`📁 Downloaded GitHub repository to persistent location: ${repoDir}`);
+    return repoDir;
   } catch (error) {
     // Clean up on error
     try {
-      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(repoDir, { recursive: true });
     } catch {}
     throw new Error(`GitHub repository download failed: ${error.message}`);
   }
@@ -615,8 +615,7 @@ mcp.registerTool(
       repo.serverTemplate = intelligentAnalysis.server_template;
       repositories.set(repoId, repo);
 
-      // Clean up temp directory
-      await MASS.ops.op_cleanup_temp_directory(tempDir);
+      console.log(`✅ Repository ${repoId} persisted at: ${repo.workspacePath}`);
 
       return {
         content: [
