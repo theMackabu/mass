@@ -1,0 +1,22 @@
+@import '@/assets/tailwind.css';
+
+:root {
+  @apply antialiased;
+  @apply text-zinc-950;
+  @apply bg-zinc-50 dark:bg-zinc-900;
+
+  isolation: isolate;
+}
+
+main {
+  @apply bg-zinc-50 dark:bg-zinc-900;
+}
+
+::selection {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.dark ::selection,
+.dark::selection {
+  background-color: rgba(255, 255, 255, 0.1);
+}

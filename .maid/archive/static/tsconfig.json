@@ -1,0 +1,4 @@
+{
+  "files": [],
+  "references": [{ "path": "./t.web.json" }, { "path": "./t.node.json" }]
+}
