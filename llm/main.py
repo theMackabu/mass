@@ -19,9 +19,11 @@ try:
     import openai
     from pydantic import BaseModel
     DEPS_AVAILABLE = True
+    AGENT_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Dependencies not available: {e}", file=sys.stderr)
     DEPS_AVAILABLE = False
+    AGENT_AVAILABLE = False
     
     # Create placeholder BaseModel
     class BaseModel:

@@ -55,7 +55,7 @@ class IntelligentMCPAgent:
         Clean JSON response by removing markdown code blocks and other formatting
         """
         if not response_text:
-            return response_text
+            raise ValueError("Empty response from LLM")
             
         # Remove markdown code blocks
         response_text = response_text.strip()
@@ -67,7 +67,13 @@ class IntelligentMCPAgent:
         if response_text.endswith('```'):
             response_text = response_text[:-3]  # Remove trailing ```
             
-        return response_text.strip()
+        cleaned = response_text.strip()
+        
+        # Validate that we have some content
+        if not cleaned:
+            raise ValueError("Empty content after cleaning LLM response")
+            
+        return cleaned
 
     async def select_important_files(self, tree_structure: str, analysis: Dict[str, Any], max_token_budget: int = 90000) -> List[str]:
         """
@@ -131,7 +137,12 @@ Focus on files that will give the best understanding of what this project does a
             raw_response = response.choices[0].message.content
             if raw_response:
                 cleaned_response = self._clean_json_response(raw_response)
-                selected_files = json.loads(cleaned_response)
+                try:
+                    selected_files = json.loads(cleaned_response)
+                except json.JSONDecodeError as e:
+                    print(f"JSON decode error in file selection. Raw response: {raw_response[:200]}...", file=sys.stderr)
+                    print(f"Cleaned response: {cleaned_response[:200]}...", file=sys.stderr)
+                    raise ValueError(f"Invalid JSON response from LLM: {e}")
 
                 # Validate it's a list of strings
                 if isinstance(selected_files, list) and all(isinstance(f, str) for f in selected_files):
@@ -321,8 +332,13 @@ Return a JSON object with this structure:
             raw_response = response.choices[0].message.content
             if raw_response:
                 cleaned_response = self._clean_json_response(raw_response)
-                result = json.loads(cleaned_response)
-                return result
+                try:
+                    result = json.loads(cleaned_response)
+                    return result
+                except json.JSONDecodeError as e:
+                    print(f"JSON decode error in codebase analysis. Raw response: {raw_response[:200]}...", file=sys.stderr)
+                    print(f"Cleaned response: {cleaned_response[:200]}...", file=sys.stderr)
+                    raise ValueError(f"Invalid JSON response from LLM: {e}")
             else:
                 raise ValueError("Empty response from OpenAI")
             
@@ -394,8 +410,13 @@ Focus on tools that would actually be useful for developers working with this pr
             raw_response = response.choices[0].message.content
             if raw_response:
                 cleaned_response = self._clean_json_response(raw_response)
-                tools = json.loads(cleaned_response)
-                return tools
+                try:
+                    tools = json.loads(cleaned_response)
+                    return tools
+                except json.JSONDecodeError as e:
+                    print(f"JSON decode error in MCP tools generation. Raw response: {raw_response[:200]}...", file=sys.stderr)
+                    print(f"Cleaned response: {cleaned_response[:200]}...", file=sys.stderr)
+                    raise ValueError(f"Invalid JSON response from LLM: {e}")
             else:
                 raise ValueError("Empty response from OpenAI")
             
@@ -527,7 +548,12 @@ Return JSON with file contents:
             raw_response = response.choices[0].message.content
             if raw_response:
                 cleaned_response = self._clean_json_response(raw_response)
-                server_files = json.loads(cleaned_response)
+                try:
+                    server_files = json.loads(cleaned_response)
+                except json.JSONDecodeError as e:
+                    print(f"JSON decode error in server template generation. Raw response: {raw_response[:200]}...", file=sys.stderr)
+                    print(f"Cleaned response: {cleaned_response[:200]}...", file=sys.stderr)
+                    raise ValueError(f"Invalid JSON response from LLM: {e}")
             else:
                 raise ValueError("Empty response from OpenAI")
             
